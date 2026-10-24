@@ -2,7 +2,7 @@
 
 **Mutable Instruments Elements, la voix de synthèse modale d'Émilie Gillet, écrite en Faust pour [faust-rs](https://github.com/grame-cncm/faust-rs), et vérifiée échantillon par échantillon contre le C++ du module lui-même.**
 
-*English version: [README.md](README.md).*
+*English version: [README.md](README.md). L'article (en anglais) : [paper/faust-elements.pdf](paper/faust-elements.pdf).*
 
 [Elements](https://pichenettes.github.io/mutable-instruments-documentation/modules/elements/) est un module Eurorack de 2014 dont le micrologiciel est libre (MIT, [pichenettes/eurorack](https://github.com/pichenettes/eurorack), `elements/dsp`). C'est une voix complète de modélisation physique, environ 3 700 lignes de C++ qui tournent à 32 kHz sur un Cortex-M4 :
 
@@ -28,7 +28,7 @@ Le C++ traite des blocs de 16 échantillons. La lecture des commandes, les front
 
 **Des rampes qui s'accumulent comme celles du C++.** Le C++ fait varier l'enveloppe, la force, la position du micro et quatre paramètres de corde en ajoutant à une valeur courante un incrément calculé en début de bloc, `(cible - valeur) / 16`. `_ramp` fait exactement cela, à partir de la valeur atteinte à la fin du bloc précédent, si bien que les arrondis de la somme sont aussi ceux du C++.
 
-**Un seul générateur aléatoire, partagé, dans l'ordre du C++.** `stmlib::Random` est un unique générateur congruentiel linéaire dans lequel l'archet tire 16 fois par bloc, puis le souffle 16 fois, puis les particules de la frappe de 0 à 48 fois selon leurs rebonds, puis chaque corde une fois par pas. Le modèle garde l'état du générateur au début du bloc et donne à chaque consommateur le mot même qu'il tirerait, par le saut de k pas du générateur (`lcg_a(k) s + lcg_c(k)`, tabulé à partir du pas du C++ lui-même) : l'archet reçoit les mots 1 à 16, le souffle 17 à 32, la frappe déroule ses 16 pas au rythme des blocs à partir du mot 33 (`el.random_block`), et chaque corde commence après les mots des cordes qui la précèdent. Une corde sous 15,7 Hz avance moins d'une fois par échantillon ; ses pas sont comptés en début de bloc en déroulant sa phase sur le bloc, pour que les mots de la corde suivante restent justes. Les entiers sont sur 32 bits et bouclent comme en C : les comparaisons non signées inversent le bit de signe, les décalages non signés masquent.
+**Un seul générateur aléatoire, partagé, dans l'ordre du C++.** `stmlib::Random` est un unique générateur congruentiel linéaire dans lequel l'archet tire 16 fois par bloc, puis le souffle 16 fois, puis les particules de la frappe de 0 à 4 fois selon leurs rebonds (un mot au front montant, deux ou trois par rebond, au plus un rebond par bloc), puis chaque corde une fois par pas. Le modèle garde l'état du générateur au début du bloc et donne à chaque consommateur le mot même qu'il tirerait, par le saut de k pas du générateur (`lcg_a(k) s + lcg_c(k)`, tabulé à partir du pas du C++ lui-même) : l'archet reçoit les mots 1 à 16, le souffle 17 à 32, la frappe déroule ses 16 pas au rythme des blocs à partir du mot 33 (`el.random_block`), et chaque corde commence après les mots des cordes qui la précèdent. Une corde sous 15,7 Hz avance moins d'une fois par échantillon ; ses pas sont comptés en début de bloc en déroulant sa phase sur le bloc, pour que les mots de la corde suivante restent justes. Les entiers sont sur 32 bits et bouclent comme en C : les comparaisons non signées inversent le bit de signe, les décalages non signés masquent.
 
 **Ce que le C++ ne traite pas reste immobile.** En mode corde, le résonateur modal n'est pas appelé ; un mode frotté au-delà du nombre de modes actifs, les quatre cordes de plus en mode une corde, le passe-tout de dispersion quand il est hors de la boucle, et une corde lente entre ses pas ne sont pas traités. Chacun est un domaine `ondemand` dont l'horloge est cette condition : ses filtres et ses lignes à retard se figent et repartent là où ils en étaient, comme ceux du C++. Les modes au-delà du nombre de modes actifs gardent leur état par une sélection.
 
@@ -84,6 +84,7 @@ La différence est dans les modes : avec 26 modes au lieu de 52, le module natif
 | `scripts/` | `compare.py` (un scénario, les deux modèles), `results.py`, `cost.sh`, `figures.py`, `gen_tables.py`, `check_doc_tests.py` |
 | `tools/render.cpp` | le rendu natif d'un scénario par le C++ de faust-rs (`make render`) |
 | `web/` | la version web : page, clavier, MIDI, hôte AudioWorklet du wasm de faust-rs (`make web`, `make web-serve`, `make web-check`) |
+| `paper/` | l'article, `faust-elements.pdf` (`make paper`) |
 | `faust-rs-issues/` | ce que le portage a trouvé dans faust-rs |
 
 ## 4. Utilisation
@@ -95,6 +96,7 @@ make check      # chaque programme compile ; --check all sur le module
 make doctests   # les 24 blocs #### Test d'elements.lib
 make test       # chaque scénario, voix et module, simple et double précision
 make results    # results/compare.txt et results/cost.txt
+make paper      # paper/faust-elements.pdf
 make render     # build/demo.wav, le rendu natif de scenarios/demo.txt (32 kHz)
 make web        # web/dsp : la voix et le corps en wasm ; make web-serve, puis http://localhost:8000/web/
 ```

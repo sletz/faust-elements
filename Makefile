@@ -11,6 +11,7 @@
 #                    the peak in single precision
 #   make results     the same, plus the cost, written to results/*.txt
 #   make figures     results/fig_bow.png and results/fig_precision.png
+#   make paper       the article, paper/faust-elements.pdf (pdflatex + bibtex)
 #   make render [SCENARIO=scenarios/demo.txt]
 #                    native render (faust-rs -lang cpp, clang -O3) to build/NAME.wav
 #   make cost        the cost of the Faust module (faustprobe and native) and of the C++
@@ -45,7 +46,7 @@ ELEMENTS_SRC = $(addprefix $(ELEMENTS)/elements/dsp/,exciter.cc multistage_envel
 # The reference arithmetic is pinned: no fused multiply-add, no fast-math.
 REF_FLAGS = -std=c++14 -O2 -ffp-contract=off -DTEST -I $(ELEMENTS) -Wno-everything
 
-.PHONY: help ref tables check doctests test results figures render cost web web-check web-serve clean
+.PHONY: help ref tables check doctests test results figures paper render cost web web-check web-serve clean
 help:
 	@sed -n '1,/^$$/p' Makefile | sed 's/^# \{0,1\}//'
 
@@ -85,6 +86,9 @@ results: build/dump build/native/render
 
 figures: build/dump
 	$(PYTHON) scripts/figures.py
+
+paper:
+	$(MAKE) -C paper
 
 build/native/elements_module.cpp: dsp/elements.dsp dsp/elements.lib dsp/elements_tables.lib
 	@mkdir -p build/native

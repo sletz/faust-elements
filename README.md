@@ -2,7 +2,7 @@
 
 **Mutable Instruments Elements, the modal synthesis voice of Emilie Gillet, written in Faust for [faust-rs](https://github.com/grame-cncm/faust-rs), and checked sample by sample against the module's own C++.**
 
-*Version française : [README.fr.md](README.fr.md).*
+*Version française : [README.fr.md](README.fr.md). The article: [paper/faust-elements.pdf](paper/faust-elements.pdf).*
 
 [Elements](https://pichenettes.github.io/mutable-instruments-documentation/modules/elements/) is a Eurorack module from 2014 whose firmware is open source (MIT, [pichenettes/eurorack](https://github.com/pichenettes/eurorack), `elements/dsp`). It is a complete physical-modelling voice in about 3,700 lines of C++ running at 32 kHz on a Cortex-M4:
 
@@ -28,7 +28,7 @@ The C++ processes blocks of 16 samples. Reading the controls, the gate flags, th
 
 **Ramps that accumulate as the C++ accumulates.** The C++ ramps the envelope, the strength, the pickup position and four string parameters by adding an increment computed at the block start, `(target - value) / 16`, to a running value. `_ramp` does exactly that, from the value reached at the previous block's end, so the rounding of the sum is the C++'s too.
 
-**One random generator, shared, in the C++'s order.** `stmlib::Random` is a single linear congruential generator that the bow draws from 16 times per block, then the blow 16 times, then the particles of the strike 0 to 48 times depending on their bounces, then each string once per tick. The model keeps the generator's state at the block start and hands every consumer the very word it would draw, with the generator's k-step jump (`lcg_a(k) s + lcg_c(k)`, tabulated from the C++'s own step): the bow gets words 1 to 16, the blow 17 to 32, the strike runs its 16 steps at block rate from word 33 (`el.random_block`), and each string starts after the words of the strings before it. A string below 15.7 Hz ticks less than once per sample; its ticks are counted at the block start by running its phase through the block, so the next string's words stay right. Integers are 32-bit and wrap, as in C: unsigned comparisons flip the sign bit, unsigned shifts mask.
+**One random generator, shared, in the C++'s order.** `stmlib::Random` is a single linear congruential generator that the bow draws from 16 times per block, then the blow 16 times, then the particles of the strike 0 to 4 times depending on their bounces (one word on the rising edge, two or three per bounce, at most one bounce per block), then each string once per tick. The model keeps the generator's state at the block start and hands every consumer the very word it would draw, with the generator's k-step jump (`lcg_a(k) s + lcg_c(k)`, tabulated from the C++'s own step): the bow gets words 1 to 16, the blow 17 to 32, the strike runs its 16 steps at block rate from word 33 (`el.random_block`), and each string starts after the words of the strings before it. A string below 15.7 Hz ticks less than once per sample; its ticks are counted at the block start by running its phase through the block, so the next string's words stay right. Integers are 32-bit and wrap, as in C: unsigned comparisons flip the sign bit, unsigned shifts mask.
 
 **What the C++ does not process stands still.** In string mode the modal resonator is not called; a bowed mode above the number of active modes, the four extra strings in single-string mode, the dispersion all-pass when it is out of the loop, and a slow string between its ticks are skipped. Each is an `ondemand` domain whose clock is that condition, so its filters and delay lines freeze, and resume where they were, as the C++'s do. The modes above the number of active ones keep their state with a select.
 
@@ -84,6 +84,7 @@ The difference lies in the modes: with 26 modes instead of 52 the native module 
 | `scripts/` | `compare.py` (one scenario, both models), `results.py`, `cost.sh`, `figures.py`, `gen_tables.py`, `check_doc_tests.py` |
 | `tools/render.cpp` | the native renderer of a scenario through the faust-rs C++ (`make render`) |
 | `web/` | the web version: page, keyboard, MIDI, AudioWorklet host of the faust-rs wasm (`make web`, `make web-serve`, `make web-check`) |
+| `paper/` | the article, `faust-elements.pdf` (`make paper`) |
 | `faust-rs-issues/` | what the port found in faust-rs |
 
 ## 4. Use
@@ -95,6 +96,7 @@ make check      # every program compiles; --check all on the module
 make doctests   # the 24 #### Test blocks of elements.lib
 make test       # every scenario, voice and module, single and double precision
 make results    # results/compare.txt and results/cost.txt
+make paper      # paper/faust-elements.pdf
 make render     # build/demo.wav, the native render of scenarios/demo.txt (32 kHz)
 make web        # web/dsp: the voice and the body in wasm; make web-serve, then http://localhost:8000/web/
 ```

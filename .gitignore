@@ -3,3 +3,9 @@ __pycache__/
 *.wav
 .DS_Store
 web/dsp/
+paper/main.aux
+paper/main.bbl
+paper/main.blg
+paper/main.log
+paper/main.out
+paper/main.pdf
