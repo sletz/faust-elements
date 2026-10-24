@@ -86,7 +86,12 @@ button { font: inherit; }
 .atlas-dot.m2 { background: var(--atlas-m2); }
 .atlas-stage { position: relative; height: 540px; }
 @media (max-width: 600px) { .atlas-stage { height: 420px; } }
-.atlas-stage canvas { display: block; touch-action: manipulation; }
+.atlas-stage canvas { display: block; touch-action: none; }
+.atlas-zoom { position: absolute; top: 16px; right: 18px; display: flex; gap: 2px; }
+.atlas-stage.compact .atlas-zoom { top: 12px; right: 12px; }
+.atlas-zoom button { width: 26px; height: 26px; padding: 0; font-size: 15px; line-height: 1; border: 1px solid var(--line); border-radius: 5px; background: var(--panel); color: var(--ink); cursor: pointer; opacity: 0.85; }
+.atlas-zoom button:hover { opacity: 1; }
+.atlas-zoom button:disabled { opacity: 0.35; cursor: default; }
 .atlas-tip { position: absolute; pointer-events: none; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px; font-size: 0.82em; box-shadow: 0 2px 8px rgb(0 0 0 / 0.15); min-width: 12em; }
 .atlas-tip .atlas-sub { color: var(--muted); margin-bottom: 4px; }
 .atlas-tip dl { display: grid; grid-template-columns: auto auto; gap: 1px 10px; margin: 0; }

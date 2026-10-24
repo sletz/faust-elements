@@ -29,13 +29,13 @@ const TEXT = {
     orbitHelp: "Every control is a dot: drag one, or the centre to move them all; Random scatters them. Library opens the presets projected on a plane: click a disc to recall it, drag the cross between discs to morph from one sound to another, double-click to keep the current sound. Play notes while you explore.",
     orbitCenter: "Bring every control back to the centre", orbitRandom: "Scatter the controls at random",
     atlasTab: "Atlas",
-    atlasHelp: "Sounds of the instrument, the presets and random patches, each played offline as A3 for one second, measured, and laid out by what they sound like. Hover a dot to read its measures, click it to load the patch and hear it. The axes are the two principal components of the measures (all but the loudness), or any measure. The diamond is the current sound, measured whenever it changes.",
+    atlasHelp: "Sounds of the instrument, the presets and random patches, each played offline as A3 for one second, measured, and laid out by what they sound like. Hover a dot to read its measures, click it to load the patch and hear it. The axes are the two principal components of the measures (all but the loudness), or any measure. The diamond is the current sound, measured whenever it changes. The wheel or a pinch zooms (over an axis, that axis alone), a drag moves the view, a double click shows the whole atlas again.",
     timbreTitle: "Timbre orbit",
     timbreHelp: "The orbit again, but its dots are the measures, each a rank among the atlas's sounds (0.5: the median sound). Move them to ask for a sound: the page loads the nearest sound of the atlas, then measures and refines it for a moment. On the atlas, the dashed ring is the sound asked for, the diamond the sound obtained. Library lays the presets out by timbre.",
     timbreSearching: "Refining…",
     timbreGap: "Asked and obtained differ by {n} percentiles on average.",
     mapTitle: "Where the sound is",
-    mapHelp: "The current sound (the diamond), measured and placed on the atlas as the orbit moves. Click a dot to load it.",
+    mapHelp: "The current sound (the diamond), measured and placed on the atlas as the orbit moves. Click a dot to load it; zoom with the wheel or a pinch, drag to move.",
     atlasMissing: "No atlas yet: run make web-atlas to compute web/atlas.json.",
     atlas: {
       axes: {
@@ -44,6 +44,7 @@ const TEXT = {
       },
       models: ["modal", "string", "chord of strings"],
       pc: "Component", sound: "Sound", xAxis: "Horizontal", yAxis: "Vertical", play: "Play on click",
+      zoomIn: "Zoom in", zoomOut: "Zoom out", zoomReset: "The whole atlas",
     },
   },
   fr: {
@@ -58,13 +59,13 @@ const TEXT = {
     orbitHelp: "Chaque commande est un point : déplacez-en un, ou le centre pour les déplacer tous ; Random les disperse. Library ouvre les préréglages projetés sur un plan : cliquez un disque pour le rappeler, glissez la croix entre les disques pour passer d'un son à l'autre, double-cliquez pour garder le son courant. Jouez des notes pendant l'exploration.",
     orbitCenter: "Ramener toutes les commandes au centre", orbitRandom: "Disperser les commandes au hasard",
     atlasTab: "Atlas",
-    atlasHelp: "Des sons de l'instrument, les préréglages et des réglages tirés au hasard, chacun joué hors ligne en la 3 pendant une seconde, mesuré, et placé selon ce qu'il fait entendre. Survolez un point pour lire ses mesures, cliquez-le pour charger le réglage et l'écouter. Les axes sont les deux composantes principales des mesures (toutes sauf le niveau), ou n'importe quelle mesure. Le losange est le son courant, mesuré à chaque changement.",
+    atlasHelp: "Des sons de l'instrument, les préréglages et des réglages tirés au hasard, chacun joué hors ligne en la 3 pendant une seconde, mesuré, et placé selon ce qu'il fait entendre. Survolez un point pour lire ses mesures, cliquez-le pour charger le réglage et l'écouter. Les axes sont les deux composantes principales des mesures (toutes sauf le niveau), ou n'importe quelle mesure. Le losange est le son courant, mesuré à chaque changement. La molette ou un pincement zoome (sur un axe, cet axe seul), un glissé déplace la vue, un double-clic montre de nouveau tout l'atlas.",
     timbreTitle: "Orbite des timbres",
     timbreHelp: "L'orbite encore, mais ses points sont les mesures, chacune un rang parmi les sons de l'atlas (0,5 : le son médian). Déplacez-les pour demander un son : la page charge le son le plus proche de l'atlas, puis le mesure et l'affine un instant. Sur l'atlas, l'anneau pointillé est le son demandé, le losange le son obtenu. Library place les préréglages selon leur timbre.",
     timbreSearching: "Affinage…",
     timbreGap: "Demandé et obtenu diffèrent de {n} centiles en moyenne.",
     mapTitle: "Où est le son",
-    mapHelp: "Le son courant (le losange), mesuré et placé sur l'atlas pendant que l'orbite bouge. Cliquez un point pour le charger.",
+    mapHelp: "Le son courant (le losange), mesuré et placé sur l'atlas pendant que l'orbite bouge. Cliquez un point pour le charger ; zoomez à la molette ou en pinçant, glissez pour déplacer.",
     atlasMissing: "Pas encore d'atlas : lancez make web-atlas pour calculer web/atlas.json.",
     atlas: {
       axes: {
@@ -73,6 +74,7 @@ const TEXT = {
       },
       models: ["modal", "corde", "accord de cordes"],
       pc: "Composante", sound: "Son", xAxis: "Horizontal", yAxis: "Vertical", play: "Jouer au clic",
+      zoomIn: "Zoomer", zoomOut: "Dézoomer", zoomReset: "Tout l'atlas",
     },
     keysHelp: "Clavier d'ordinateur : deux rangées depuis Z et Q (W et A en AZERTY), ← → changent l'octave, la barre d'espace maintient les notes tant qu'elle est enfoncée. Double-cliquez une commande pour la remettre à zéro.",
     sustain: "Maintien (pédale)",

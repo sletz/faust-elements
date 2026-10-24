@@ -2,12 +2,16 @@
 // and random patches, each played once offline and measured, laid out on a plane
 // by what they sound like rather than by their controls. A dot is a patch; its
 // colour is the resonator's model, the presets are labelled. Hovering shows the
-// measures, a click hands the patch to the page.
+// measures, a click hands the patch to the page. The wheel or a pinch zooms
+// about the pointer (over an axis, that axis alone), a drag moves the view, a
+// double click or the frame button shows the whole atlas again.
 
 // Measures read on a log scale, as in the principal components.
 const LOG_AXES = new Set(["brightness", "attack", "decay"]);
 const MARGIN = { left: 56, right: 14, top: 12, bottom: 40 };
 const HIT = 10; // px, the reach of the pointer
+const MAX_ZOOM = 400; // the narrowest view, as a fraction of the whole extent
+const DRAG = 4; // px a press must move to be a drag rather than a click
 
 /**
  * @param {HTMLElement} container - the element the atlas renders into (emptied)
@@ -46,6 +50,10 @@ export function createAtlas(container, o) {
   const margin = compact ? { left: 30, right: 8, top: 8, bottom: 26 } : MARGIN;
   let hover = -1;
   let screen = new Float32Array(0); // x, y of every dot, CSS px
+  // The range shown on each axis, in axis values (log10 on a log axis), or
+  // null for the whole extent; and the plot's frame as last drawn.
+  const view = { x: null, y: null };
+  let frame = null;
 
   function pcLabel(i) {
     const c = data.components[i];
@@ -74,9 +82,16 @@ export function createAtlas(container, o) {
     l.append(`${label} `, s);
     return l;
   };
+  // Another measure on an axis: that axis shows all of it again.
   bar.append(
-    select(text.xAxis, xAxis, (c) => (xAxis = c)),
-    select(text.yAxis, yAxis, (c) => (yAxis = c)),
+    select(text.xAxis, xAxis, (c) => {
+      xAxis = c;
+      view.x = null;
+    }),
+    select(text.yAxis, yAxis, (c) => {
+      yAxis = c;
+      view.y = null;
+    }),
   );
   const play = document.createElement("label");
   const playBox = document.createElement("input");
@@ -98,7 +113,24 @@ export function createAtlas(container, o) {
   const tip = document.createElement("div");
   tip.className = "atlas-tip";
   tip.hidden = true;
-  stage.append(canvas, tip);
+  // Zoom in, out, and the whole atlas, over the plot's top right corner.
+  const zoomBar = document.createElement("div");
+  zoomBar.className = "atlas-zoom";
+  const zoomButton = (label, title, act) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = label;
+    b.title = title;
+    b.setAttribute("aria-label", title);
+    b.addEventListener("click", act);
+    zoomBar.appendChild(b);
+    return b;
+  };
+  const centre = () => [frame.left + frame.pw / 2, frame.top + frame.ph / 2];
+  zoomButton("+", text.zoomIn, () => frame && zoomAt(...centre(), 1 / 1.5, true, true));
+  zoomButton("−", text.zoomOut, () => frame && zoomAt(...centre(), 1.5, true, true));
+  const whole = zoomButton("⤢", text.zoomReset, () => resetView());
+  stage.append(canvas, tip, zoomBar);
   if (compact) container.append(stage);
   else container.append(bar, stage);
   stage.classList.toggle("compact", compact);
@@ -121,7 +153,8 @@ export function createAtlas(container, o) {
   };
 
   // Round ticks between lo and hi: steps of 1, 2 or 5 times a power of ten,
-  // and on a log axis the 1, 2, 5 of every decade.
+  // and on a log axis the 1, 2, 5 of every decade, or when zoomed within a
+  // decade round values placed on the log scale.
   function ticks(axis, lo, hi) {
     const out = [];
     if (axis.log) {
@@ -131,8 +164,13 @@ export function createAtlas(container, o) {
           if (v >= lo && v <= hi) out.push([v, format10(m * 10 ** e)]);
         }
       }
-      return out;
+      if (out.length >= 3) return out;
+      return linearTicks(10 ** lo, 10 ** hi).filter(([v]) => v > 0).map(([v, label]) => [Math.log10(v), label]);
     }
+    return linearTicks(lo, hi);
+  }
+  function linearTicks(lo, hi) {
+    const out = [];
     const raw = (hi - lo) / 6;
     const p = 10 ** Math.floor(Math.log10(raw));
     const step = [1, 2, 5, 10].map((m) => m * p).find((s) => s >= raw);
@@ -142,6 +180,51 @@ export function createAtlas(container, o) {
   const format10 = (v) => (Math.abs(v) >= 1000 ? `${v / 1000}k` : String(Number(v.toPrecision(3))));
 
   const css = (name) => getComputedStyle(container).getPropertyValue(name).trim();
+
+  // Zoom by `factor` (below 1 zooms in) about the point (px, py) of the canvas,
+  // on the x and/or the y axis, keeping the view within the whole extent.
+  function zoomAt(px, py, factor, onX, onY) {
+    const scale = (key, full, pos) => {
+      const [lo, hi] = view[key] || full;
+      const span = Math.min(full[1] - full[0], Math.max((full[1] - full[0]) / MAX_ZOOM, (hi - lo) * factor));
+      const anchor = lo + pos * (hi - lo);
+      view[key] = clampRange(anchor - pos * span, span, full);
+    };
+    if (onX) scale("x", frame.fullX, (px - frame.left) / frame.pw);
+    if (onY) scale("y", frame.fullY, 1 - (py - frame.top) / frame.ph);
+    tidyView();
+    draw();
+  }
+
+  // Move the view by (dx, dy) CSS px.
+  function panBy(dx, dy) {
+    for (const [key, full, d, len] of [["x", frame.fullX, -dx, frame.pw], ["y", frame.fullY, dy, frame.ph]]) {
+      if (!view[key]) continue;
+      const [lo, hi] = view[key];
+      view[key] = clampRange(lo + (d / len) * (hi - lo), hi - lo, full);
+    }
+    draw();
+  }
+
+  // [lo, lo + span] moved inside full.
+  const clampRange = (lo, span, full) => {
+    const start = Math.min(Math.max(lo, full[0]), full[1] - span);
+    return [start, start + span];
+  };
+
+  // A view that shows a whole axis is no zoom on it.
+  function tidyView() {
+    for (const [key, full] of [["x", frame.fullX], ["y", frame.fullY]]) {
+      const v = view[key];
+      if (v && v[1] - v[0] >= (full[1] - full[0]) * (1 - 1e-9)) view[key] = null;
+    }
+  }
+
+  function resetView() {
+    view.x = null;
+    view.y = null;
+    draw();
+  }
 
   function draw() {
     const w = stage.clientWidth;
@@ -154,10 +237,14 @@ export function createAtlas(container, o) {
     canvas.style.height = `${h}px`;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
-    const [x0, x1] = extent(xAxis);
-    const [y0, y1] = extent(yAxis);
+    const fullX = extent(xAxis);
+    const fullY = extent(yAxis);
+    const [x0, x1] = view.x || fullX;
+    const [y0, y1] = view.y || fullY;
     const pw = w - margin.left - margin.right;
     const ph = h - margin.top - margin.bottom;
+    frame = { left: margin.left, top: margin.top, pw, ph, fullX, fullY };
+    whole.disabled = !view.x && !view.y;
     const sx = (v) => margin.left + ((v - x0) / (x1 - x0)) * pw;
     const sy = (v) => margin.top + (1 - (v - y0) / (y1 - y0)) * ph;
     const ink = css("--ink");
@@ -203,6 +290,11 @@ export function createAtlas(container, o) {
     ctx.fillText(title(yAxis, ph), 0, 0);
     ctx.restore();
 
+    // What is drawn on the plot stays inside its frame when zoomed.
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(margin.left, margin.top, pw, ph);
+    ctx.clip();
     // The dots, the random patches first, the presets above them.
     screen = new Float32Array(2 * data.points.length);
     data.points.forEach((p, i) => {
@@ -302,7 +394,11 @@ export function createAtlas(container, o) {
       ctx.arc(screen[2 * i], screen[2 * i + 1], r, 0, 2 * Math.PI);
       ctx.stroke();
     }
+    ctx.restore();
   }
+
+  // Whether the canvas point (x, y) lies on the plot.
+  const onPlot = (x, y) => frame && x >= frame.left && x <= frame.left + frame.pw && y >= frame.top && y <= frame.top + frame.ph;
 
   // The dot nearest the pointer within HIT px, or -1.
   function pick(e) {
@@ -311,7 +407,9 @@ export function createAtlas(container, o) {
     const y = e.clientY - rect.top;
     let best = -1;
     let bestD = HIT * HIT;
+    if (!onPlot(x, y)) return -1;
     for (let i = 0; i < data.points.length; i += 1) {
+      if (!onPlot(screen[2 * i], screen[2 * i + 1])) continue;
       const dx = screen[2 * i] - x;
       const dy = screen[2 * i + 1] - y;
       // A preset wins over a random patch at the same distance.
@@ -365,26 +463,101 @@ export function createAtlas(container, o) {
     tip.style.top = `${top}px`;
   }
 
+  // The pointers pressed on the canvas (two for a pinch), where they are, and
+  // whether the press became a drag (then it is not a click).
+  const pressed = new Map();
+  let dragged = false;
+  let pinch = 0; // the distance between two pressed pointers
+  const local = (e) => {
+    const rect = canvas.getBoundingClientRect();
+    return [e.clientX - rect.left, e.clientY - rect.top];
+  };
+
+  canvas.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    const [x, y] = local(e);
+    pressed.set(e.pointerId, { x, y, x0: x, y0: y });
+    if (pressed.size === 1) dragged = false;
+    if (pressed.size === 2) {
+      const [a, b] = [...pressed.values()];
+      pinch = Math.hypot(a.x - b.x, a.y - b.y);
+      dragged = true;
+    }
+    canvas.setPointerCapture(e.pointerId);
+  });
   canvas.addEventListener("pointermove", (e) => {
+    const press = pressed.get(e.pointerId);
+    if (press && frame) {
+      const [x, y] = local(e);
+      if (pressed.size === 2) {
+        press.x = x;
+        press.y = y;
+        const [a, b] = [...pressed.values()];
+        const d = Math.hypot(a.x - b.x, a.y - b.y);
+        if (pinch > 0 && d > 0) zoomAt((a.x + b.x) / 2, (a.y + b.y) / 2, pinch / d, true, true);
+        pinch = d;
+        return;
+      }
+      if (!dragged && Math.hypot(x - press.x0, y - press.y0) < DRAG) return;
+      if (!dragged) {
+        dragged = true;
+        hover = -1;
+        showTip(-1);
+      }
+      canvas.style.cursor = view.x || view.y ? "grabbing" : "default";
+      const [dx, dy] = [x - press.x, y - press.y];
+      press.x = x;
+      press.y = y;
+      panBy(dx, dy);
+      return;
+    }
     const i = pick(e);
     if (i === hover) return;
     hover = i;
-    canvas.style.cursor = i >= 0 ? "pointer" : "default";
+    canvas.style.cursor = i >= 0 ? "pointer" : view.x || view.y ? "grab" : "default";
     draw();
     showTip(i);
   });
+  const release = (e) => {
+    pressed.delete(e.pointerId);
+    if (pressed.size < 2) pinch = 0;
+    canvas.style.cursor = "default";
+  };
+  canvas.addEventListener("pointerup", release);
+  canvas.addEventListener("pointercancel", release);
   canvas.addEventListener("pointerleave", () => {
+    if (pressed.size) return;
     hover = -1;
     draw();
     showTip(-1);
   });
   canvas.addEventListener("click", (e) => {
+    if (dragged) return;
     const i = pick(e);
     if (i < 0) return;
     current = i;
     draw();
     o.onPick(i, playBox.checked);
   });
+  canvas.addEventListener("dblclick", (e) => {
+    if (pick(e) < 0) resetView();
+  });
+  // The wheel, and a trackpad's pinch (a wheel event with ctrlKey), zoom about
+  // the pointer: both axes on the plot, one over its ticks.
+  canvas.addEventListener("wheel", (e) => {
+    if (!frame) return;
+    const [x, y] = local(e);
+    e.preventDefault();
+    const overXTicks = y > frame.top + frame.ph;
+    const overYTicks = x < frame.left;
+    const lines = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1;
+    const factor = Math.exp(e.deltaY * lines * (e.ctrlKey ? 0.01 : 0.002));
+    const px = Math.min(Math.max(x, frame.left), frame.left + frame.pw);
+    const py = Math.min(Math.max(y, frame.top), frame.top + frame.ph);
+    zoomAt(px, py, factor, !overYTicks || overXTicks, !overXTicks || overYTicks);
+    hover = -1;
+    showTip(-1);
+  }, { passive: false });
 
   // Drawn again when its box changes size and when the colours change.
   let lastSize = "";
