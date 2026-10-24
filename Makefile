@@ -145,9 +145,9 @@ web-fuzz: web
 web-bounds: web
 	node scripts/check_bounds.mjs
 
-web-atlas: web/atlas.json
-
-web/atlas.json: $(WEB_DSP)/voice.wasm $(WEB_DSP)/body.wasm web/controls.js web/describe.js scripts/gen_atlas.mjs
+# The atlas is committed (GitHub Pages publishes it): made again only when
+# asked, never as a side effect of a file's date (a comment, a checkout).
+web-atlas: web
 	node scripts/gen_atlas.mjs 2000 1
 
 pwa-cert:
@@ -156,7 +156,7 @@ pwa-cert:
 check-qrcode:
 	node scripts/check_qrcode.mjs
 
-web-serve: web web/atlas.json
+web-serve: web
 	$(PYTHON) scripts/web_serve.py $(PORT)
 
 clean:
