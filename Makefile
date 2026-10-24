@@ -29,6 +29,10 @@
 #   make web-atlas   the atlas of the page: 2,000 random patches and the presets
 #                    rendered with the wasm, measured and laid out (web/atlas.json,
 #                    about a minute; node)
+#   make pwa-cert    the certificates the phone apps are served with on the local
+#                    network (build/pwa-cert: a local authority, made once, and a
+#                    certificate for this machine's address)
+#   make check-qrcode the page's QR codes decoded by the system's reader (macOS)
 #   make web-serve [PORT=8000]
 #                    serve the repository; open http://localhost:PORT/web/
 #   make clean       remove build/
@@ -56,7 +60,7 @@ ELEMENTS_SRC = $(addprefix $(ELEMENTS)/elements/dsp/,exciter.cc multistage_envel
 # The reference arithmetic is pinned: no fused multiply-add, no fast-math.
 REF_FLAGS = -std=c++14 -O2 -ffp-contract=off -DTEST -I $(ELEMENTS) -Wno-everything
 
-.PHONY: help ref tables check doctests test results figures paper render cost web web-check web-presets web-fuzz web-bounds web-atlas web-serve clean
+.PHONY: help ref tables check doctests test results figures paper render cost web web-check web-presets web-fuzz web-bounds web-atlas web-serve pwa-cert check-qrcode clean
 help:
 	@sed -n '1,/^$$/p' Makefile | sed 's/^# \{0,1\}//'
 
@@ -145,6 +149,12 @@ web-atlas: web/atlas.json
 
 web/atlas.json: $(WEB_DSP)/voice.wasm $(WEB_DSP)/body.wasm web/controls.js web/describe.js scripts/gen_atlas.mjs
 	node scripts/gen_atlas.mjs 2000 1
+
+pwa-cert:
+	sh scripts/pwa_cert.sh
+
+check-qrcode:
+	node scripts/check_qrcode.mjs
 
 web-serve: web web/atlas.json
 	$(PYTHON) scripts/web_serve.py $(PORT)

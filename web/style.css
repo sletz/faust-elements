@@ -114,3 +114,28 @@ button { font: inherit; }
 .atlas-tip dl { display: grid; grid-template-columns: auto auto; gap: 1px 10px; margin: 0; }
 .atlas-tip dt { color: var(--muted); }
 .atlas-tip dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+.phone-panel { display: block; }
+.phone-panel h3 { margin: 14px 0 6px; font-size: 1em; }
+.phone-maps { display: grid; gap: 6px; margin-bottom: 8px; }
+.phone-map { display: grid; grid-template-columns: minmax(8em, 1.4fr) 4em minmax(7em, 1fr) minmax(11em, 1.6fr) minmax(11em, 1.6fr) 2.2em; gap: 6px; align-items: center; }
+.phone-map.head { color: var(--muted); font-size: 0.85em; }
+.phone-map .triple { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+.phone-map input, .phone-map select, .phone-app input[type="text"] { width: 100%; min-width: 0; font: inherit; }
+.phone-sim { margin: 12px 0; }
+.phone-axis { display: grid; grid-template-columns: 1.5em minmax(0, 1fr) 3.5em; gap: 8px; align-items: center; max-width: 420px; }
+.phone-app { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: flex-end; }
+.phone-app label { display: flex; flex-direction: column; gap: 4px; min-width: 14em; }
+.phone-hosting { border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; margin: 0; }
+.phone-hosting label, .phone-show label { flex-direction: row; align-items: center; min-width: 0; gap: 6px; }
+.phone-show { border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; margin: 0; }
+.phone-result { margin-top: 12px; }
+.phone-qr { display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: flex-start; margin: 10px 0; }
+.phone-qr .qr svg { display: block; width: 200px; height: 200px; border-radius: 4px; }
+.phone-qr div:last-child { flex: 1; min-width: 14em; }
+.phone-qr a { word-break: break-all; }
+.phone-error { color: var(--accent); font-weight: 600; }
+@media (max-width: 760px) {
+  .phone-map { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .phone-map.head { display: none; }
+  .phone-map .triple { grid-column: 1 / -1; }
+}

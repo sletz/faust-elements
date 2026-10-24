@@ -1,0 +1,54 @@
+:root {
+  --bg: #1b1b1d; --panel: #26262a; --ink: #eee; --muted: #aaa; --accent: #e07a5f; --line: #3a3a40;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); }
+body {
+  font: 16px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+  display: flex; flex-direction: column;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+  overscroll-behavior: none;
+}
+header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 10px 16px 0; }
+h1 { margin: 0; font-size: 1.2em; }
+#status { color: var(--muted); font-size: 0.85em; text-align: right; }
+main { flex: 1; display: flex; flex-direction: column; gap: 10px; padding: 10px 16px 16px; min-height: 0; }
+#motion { display: flex; flex-direction: column; gap: 8px; }
+.map { background: var(--panel); border-radius: 8px; padding: 8px 10px; }
+.map .top { display: flex; justify-content: space-between; gap: 8px; font-size: 0.9em; }
+.map .axis { color: var(--muted); }
+.map .meter { height: 8px; background: var(--line); border-radius: 4px; margin-top: 6px; overflow: hidden; }
+.map .meter > div { height: 100%; width: 0; background: var(--accent); }
+.empty { color: var(--muted); font-size: 0.9em; }
+.bar { display: flex; align-items: center; gap: 8px; }
+.bar button {
+  font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line);
+  border-radius: 8px; padding: 8px 12px; min-width: 44px; min-height: 44px;
+}
+.bar button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+#onoff {
+  font: 700 1.6em system-ui, sans-serif; color: var(--ink); background: var(--panel);
+  border: 2px solid var(--line); border-radius: 14px; min-height: 96px; letter-spacing: 0.05em;
+}
+#onoff[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+#onoff[hidden], .bar button[hidden], #keyboard[hidden], #controls[hidden] { display: none; }
+body.no-keyboard #onoff { flex: 1; min-height: 160px; font-size: 2.4em; }
+body.controls-open #onoff { flex: none; min-height: 64px; font-size: 1.4em; }
+#controls { position: relative; flex: 1; min-height: 240px; overflow: auto; background: var(--panel); border-radius: 8px; }
+#controls .faust-ui-root { position: absolute; inset: 0; overflow: auto; }
+#octave { min-width: 2.5em; text-align: center; font-variant-numeric: tabular-nums; }
+#hold { margin-left: auto; }
+#keyboard { position: relative; display: flex; flex: 1; min-height: 160px; touch-action: none; }
+.key { position: relative; flex: 1; border: 1px solid #555; background: #fafafa; border-radius: 0 0 6px 6px; }
+.key.black { position: absolute; top: 0; height: 60%; background: #222; z-index: 1; border-radius: 0 0 4px 4px; }
+.key.down { background: var(--accent); }
+.key.held { background: color-mix(in srgb, var(--accent) 45%, #fafafa); }
+.key.black.held { background: color-mix(in srgb, var(--accent) 55%, #222); }
+.key .label { position: absolute; bottom: 6px; left: 0; right: 0; text-align: center; font-size: 11px; color: #777; }
+#start {
+  position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center;
+  background: color-mix(in srgb, var(--bg) 92%, transparent); z-index: 10; padding: 24px;
+  font-size: 1.3em; cursor: pointer;
+}
+#start[hidden] { display: none; }

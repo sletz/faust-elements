@@ -6,6 +6,7 @@ import { controlKey, uiItems } from "./faust-wasm-dsp.js";
 import { createAtlas } from "./atlas.js";
 import { project } from "./describe.js";
 import { createOrbit } from "./orbit.js";
+import { createPhoneTab } from "./pwa.js";
 import { createTimbreOrbit, nearestSound, percentile, quantile, timbreTable } from "./timbre.js";
 
 const DSP_DIR = "dsp/";
@@ -301,6 +302,7 @@ function buildControls() {
     ...GROUPS.filter((g) => CONTROLS.some((c) => c.group === g.id && ranges.has(c.key))),
     { id: "orbit", en: TEXT.en.orbitTab, fr: TEXT.fr.orbitTab },
     { id: "atlas", en: TEXT.en.atlasTab, fr: TEXT.fr.atlasTab },
+    { id: "phone", en: "Phone", fr: "Téléphone" },
   ];
   // The atlas, its map and the timbre orbit are drawn again in the new
   // language when their tab is shown.
@@ -341,6 +343,19 @@ function buildControls() {
       help.className = "help";
       help.textContent = t("atlasHelp");
       panel.append(help, sideBySide(atlasHost, "atlas-layout", t("timbreTitle"), t("timbreHelp"), timbreHost, timbreStatus));
+    }
+    // The phone app (web/pwa.js): its mappings, their simulation, its build.
+    if (g.id === "phone") {
+      panel.classList.add("phone-panel");
+      createPhoneTab(panel, {
+        lang,
+        controls: CONTROLS,
+        ranges,
+        values,
+        setControl,
+        presetName: () => (PRESETS.find((p) => p.id === $("preset").value) || PRESETS[0])[lang][0],
+        polyphony: () => Number($("polyphony").value),
+      });
     }
     for (const c of CONTROLS.filter((x) => x.group === g.id && ranges.has(x.key))) {
       const r = ranges.get(c.key);

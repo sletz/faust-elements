@@ -1,0 +1,41 @@
+<!doctype html>
+<!-- The phone app built by the page's Phone tab (web/pwa.js), which fills in
+     __LANG__ and __NAME__ (escaped). -->
+<html lang="__LANG__">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>__NAME__</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#1b1b1d">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="__NAME__">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-192.png">
+<link rel="stylesheet" href="phone.css">
+</head>
+<body>
+<header>
+  <h1 id="name">__NAME__</h1>
+  <span id="status"></span>
+</header>
+<main>
+  <section id="motion"></section>
+  <button type="button" id="onoff" aria-pressed="false" hidden>ON</button>
+  <section class="bar">
+    <button type="button" id="octave-down">−</button>
+    <span id="octave"></span>
+    <button type="button" id="octave-up">+</button>
+    <button type="button" id="hold" aria-pressed="false"></button>
+    <button type="button" id="follow" aria-pressed="true"></button>
+    <button type="button" id="controls-toggle" aria-pressed="false" hidden></button>
+  </section>
+  <section id="controls" hidden></section>
+  <div id="keyboard"></div>
+</main>
+<div id="start" role="button" tabindex="0"><span id="start-text"></span></div>
+<script type="module" src="phone.js"></script>
+</body>
+</html>
