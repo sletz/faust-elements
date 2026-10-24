@@ -4,7 +4,8 @@
 #   make ref         build ref/dump.cpp against Elements' own sources (build/dump)
 #   make tables      dump the C++ tables and write dsp/elements_tables.lib
 #   make check       compile every program with faustprobe; block sizes, reset and
-#                    determinism of the module (faustprobe --check all)
+#                    determinism of the module (faustprobe --check all); the table
+#                    reads given arguments out of range stay in their tables (tests/)
 #   make doctests    compile every `#### Test` of dsp/elements.lib
 #   make test        every scenario against the C++, voice and module, single and
 #                    double precision (scripts/compare.py); exit 1 beyond -60 dB of
@@ -23,6 +24,8 @@
 #                    none above 0 dBFS (node)
 #   make web-fuzz    random patches (as the orbit's Random) through the wasm: none
 #                    diverges (node)
+#   make web-bounds  every control written past its range through the wasm sounds
+#                    exactly as its bound, and stays finite (node)
 #   make web-atlas   the atlas of the page: 2,000 random patches and the presets
 #                    rendered with the wasm, measured and laid out (web/atlas.json,
 #                    about a minute; node)
@@ -53,7 +56,7 @@ ELEMENTS_SRC = $(addprefix $(ELEMENTS)/elements/dsp/,exciter.cc multistage_envel
 # The reference arithmetic is pinned: no fused multiply-add, no fast-math.
 REF_FLAGS = -std=c++14 -O2 -ffp-contract=off -DTEST -I $(ELEMENTS) -Wno-everything
 
-.PHONY: help ref tables check doctests test results figures paper render cost web web-check web-presets web-fuzz web-atlas web-serve clean
+.PHONY: help ref tables check doctests test results figures paper render cost web web-check web-presets web-fuzz web-bounds web-atlas web-serve clean
 help:
 	@sed -n '1,/^$$/p' Makefile | sed 's/^# \{0,1\}//'
 
@@ -76,6 +79,12 @@ check:
 	@$(FAUSTPROBE) --double -I dsp --sr 32000 -n 20000 --in zero --quiet --set gate=1 --set bow=0.4 --set blow=0.8 \
 	  --set mallet=0.9 --set space=1.3 --at 8000 gate=0 --at 12013 gate=1 --check all dsp/elements.dsp > build/check.txt \
 	  && echo "ok   dsp/elements.dsp: --check all (block sizes, reset, determinism)" || { cat build/check.txt; exit 1; }
+	@$(FAUSTPROBE) -I dsp --sr 32000 -n 32000 --in zero --quiet --compare tests/signature_out_of_range.dsp \
+	  tests/signature_bounds.dsp > build/bounds.txt \
+	  && echo "ok   tests/signature_out_of_range.dsp: a signature out of range reads within the table" || { cat build/bounds.txt; exit 1; }
+	@$(FAUSTPROBE) -I dsp --sr 32000 -n 4000 --in zero --quiet --compare tests/table_reads_out_of_range.dsp \
+	  tests/table_reads_bounds.dsp > build/table_reads.txt \
+	  && echo "ok   tests/table_reads_out_of_range.dsp: s2r, timbres, strike, accent read within their tables" || { cat build/table_reads.txt; exit 1; }
 
 doctests:
 	$(PYTHON) scripts/check_doc_tests.py
@@ -128,6 +137,9 @@ web-presets: web
 
 web-fuzz: web
 	node scripts/fuzz_web.mjs 2000 1
+
+web-bounds: web
+	node scripts/check_bounds.mjs
 
 web-atlas: web/atlas.json
 

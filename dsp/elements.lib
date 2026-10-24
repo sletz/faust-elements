@@ -196,10 +196,15 @@ _u2f(x) = float(x) + (x < 0) * 4294967296.0;
 // ```
 //----------------------------------------------------------------------------------------
 declare s2r license "MIT";
-s2r(st) = tb.lut_pitch_ratio_high(pi) * tb.lut_pitch_ratio_low(int(pf * 256.0))
+s2r(st) = tb.lut_pitch_ratio_high(pi) * tb.lut_pitch_ratio_low(_clip(0, 255, int(pf * 256.0)))
 with {
+    // The tables span -128 .. 128 semitones, which the callers' clamped controls
+    // keep to. For any st the indices stay within the tables, clamped as integers:
+    // below -128 the ratio of -128, above 128 that of 128 + 255/256, the table's
+    // last entries. The float p is left as it was: clamping it changes how the
+    // compiler groups st + 128 and the rounding of single-precision chords.
     p = st + 128.0;
-    pi = int(p);
+    pi = _clip(0, 256, int(p));
     pf = p - float(pi);
 };
 
@@ -339,39 +344,44 @@ with {
 // values of `Part::Init`.
 //========================================================================================
 
+// Every control is kept within its declared range whatever the host writes: Faust
+// does not bound a control by its range, and out of it some read a table past its
+// end (the signature, the timbres, the mallet) or diverge to NaN (the brightness,
+// the position, the modulation's offset...). scripts/check_bounds.mjs writes each
+// one past its bounds.
 _exc(x) = hgroup("[1]exciter", x);
 _res(x) = hgroup("[2]resonator", x);
 _spc(x) = hgroup("[3]space", x);
 _unit(x) = hgroup("[4]unit", x);
 _perf(x) = hgroup("[0]performance", x);
 
-envelope = _exc(vslider("[0]envelope[tooltip: contour: percussive, AD, ADSR, AR]", 1.0, 0, 1, 0.001));
-bow = _exc(vslider("[1]bow[tooltip: bow level]", 0.0, 0, 1, 0.001));
-blow = _exc(vslider("[2]blow[tooltip: blow level; above 2/3 the reed tube]", 0.0, 0, 1, 0.001));
-strike = _exc(vslider("[3]strike[tooltip: strike level; above 0.8 the mallet bleeds]", 0.8, 0, 1, 0.001));
-bow_timbre = _exc(vslider("[4]bow_timbre", 0.5, 0, 0.9995, 0.001));
-flow = _exc(vslider("[5]flow[tooltip: blow meta: granular restart point]", 0.5, 0, 0.9995, 0.001));
-blow_timbre = _exc(vslider("[6]blow_timbre", 0.5, 0, 0.9995, 0.001));
-mallet = _exc(vslider("[7]mallet[tooltip: strike meta: samples, mallet, plectrum, particles]", 0.5, 0, 0.9995, 0.001));
-strike_timbre = _exc(vslider("[8]strike_timbre", 0.5, 0, 0.995, 0.001));
-geometry = _res(vslider("[0]geometry", 0.2, 0, 0.9995, 0.001));
-brightness = _res(vslider("[1]brightness", 0.5, 0, 0.9995, 0.001));
-damping = _res(vslider("[2]damping", 0.25, 0, 0.9995, 0.001));
-position = _res(vslider("[3]position", 0.3, 0, 0.9995, 0.001));
-model = _res(nentry("[4]model[tooltip: 0 modal, 1 string, 2 strings]", 0, 0, 2, 1));
-space = _spc(vslider("[0]space[tooltip: stereo, then reverb; frozen above 1.75]", 0.5, 0, 2, 0.001));
-signature = _unit(vslider("[0]signature", 0.0, 0, 0.99, 0.001));
-mod_frequency = _unit(vslider("[1]mod_frequency[unit:Hz]", 0.5, 0, 2, 0.001));
+envelope = _exc(vslider("[0]envelope[tooltip: contour: percussive, AD, ADSR, AR]", 1.0, 0, 1, 0.001)) : _clip(0.0, 1.0);
+bow = _exc(vslider("[1]bow[tooltip: bow level]", 0.0, 0, 1, 0.001)) : _clip(0.0, 1.0);
+blow = _exc(vslider("[2]blow[tooltip: blow level; above 2/3 the reed tube]", 0.0, 0, 1, 0.001)) : _clip(0.0, 1.0);
+strike = _exc(vslider("[3]strike[tooltip: strike level; above 0.8 the mallet bleeds]", 0.8, 0, 1, 0.001)) : _clip(0.0, 1.0);
+bow_timbre = _exc(vslider("[4]bow_timbre", 0.5, 0, 0.9995, 0.001)) : _clip(0.0, 0.9995);
+flow = _exc(vslider("[5]flow[tooltip: blow meta: granular restart point]", 0.5, 0, 0.9995, 0.001)) : _clip(0.0, 0.9995);
+blow_timbre = _exc(vslider("[6]blow_timbre", 0.5, 0, 0.9995, 0.001)) : _clip(0.0, 0.9995);
+mallet = _exc(vslider("[7]mallet[tooltip: strike meta: samples, mallet, plectrum, particles]", 0.5, 0, 0.9995, 0.001)) : _clip(0.0, 0.9995);
+strike_timbre = _exc(vslider("[8]strike_timbre", 0.5, 0, 0.995, 0.001)) : _clip(0.0, 0.995);
+geometry = _res(vslider("[0]geometry", 0.2, 0, 0.9995, 0.001)) : _clip(0.0, 0.9995);
+brightness = _res(vslider("[1]brightness", 0.5, 0, 0.9995, 0.001)) : _clip(0.0, 0.9995);
+damping = _res(vslider("[2]damping", 0.25, 0, 0.9995, 0.001)) : _clip(0.0, 0.9995);
+position = _res(vslider("[3]position", 0.3, 0, 0.9995, 0.001)) : _clip(0.0, 0.9995);
+model = _res(nentry("[4]model[tooltip: 0 modal, 1 string, 2 strings]", 0, 0, 2, 1)) : _clip(0.0, 2.0);
+space = _spc(vslider("[0]space[tooltip: stereo, then reverb; frozen above 1.75]", 0.5, 0, 2, 0.001)) : _clip(0.0, 2.0);
+signature = _unit(vslider("[0]signature", 0.0, 0, 0.99, 0.001)) : _clip(0.0, 0.99);
+mod_frequency = _unit(vslider("[1]mod_frequency[unit:Hz]", 0.5, 0, 2, 0.001)) : _clip(0.0, 2.0);
 // The side pickup's amplitudes come from `CosineOscillator::InitApproximate` at
 // mod_offset + the LFO (up to 0.5); past about 1.35 its coefficient exceeds 2 and
 // the 52 amplitudes grow exponentially (to 1e35 at 1.48), so the range stops at
 // 0.5. `Part::Seed` gives the module 0.05 .. 0.15.
-mod_offset = _unit(vslider("[2]mod_offset", 0.1, 0, 0.5, 0.001));
-diffusion = _unit(vslider("[3]diffusion", 0.625, 0, 0.9, 0.001));
-reverb_lp = _unit(vslider("[4]reverb_lp", 0.7, 0, 1, 0.001));
-note = _perf(hslider("[0]note", 69, -48, 160, 0.001));
-strength = _perf(hslider("[1]strength", 0.5, 0, 1, 0.001));
-modulation = _perf(hslider("[2]modulation", 0, -60, 60, 0.001));
+mod_offset = _unit(vslider("[2]mod_offset", 0.1, 0, 0.5, 0.001)) : _clip(0.0, 0.5);
+diffusion = _unit(vslider("[3]diffusion", 0.625, 0, 0.9, 0.001)) : _clip(0.0, 0.9);
+reverb_lp = _unit(vslider("[4]reverb_lp", 0.7, 0, 1, 0.001)) : _clip(0.0, 1.0);
+note = _perf(hslider("[0]note", 69, -48, 160, 0.001)) : _clip(-48.0, 160.0);
+strength = _perf(hslider("[1]strength", 0.5, 0, 1, 0.001)) : _clip(0.0, 1.0);
+modulation = _perf(hslider("[2]modulation", 0, -60, 60, 0.001)) : _clip(-60.0, 60.0);
 gate = _perf(button("[3]gate"));
 
 //======================================== Envelope ======================================
@@ -472,11 +482,14 @@ _rfloat(w) = _u2f(w) / 4294967296.0;
 //========================================================================================
 
 // `Exciter::GetPulseAmplitude` and the exciter's low-pass (`set_g_r_h(g, 2, h)`).
-_pulse(timbre) = tb.lut_approx_svf_gain(int(timbre * 256.0));
+// The index of a timbre in the 257 entries of the lut_approx_svf_* tables, clamped
+// as an integer: a timbre beyond 0 .. 1 reads its nearest bound.
+_timbre_index(timbre) = _clip(0, 256, int(timbre * 256.0));
+_pulse(timbre) = tb.lut_approx_svf_gain(_timbre_index(timbre));
 _exc_lp(timbre) = svf_lp(tb.lut_approx_svf_g(ci), 2.0, tb.lut_approx_svf_h(ci))
-with { ci = int(timbre * 256.0); };
+with { ci = _timbre_index(timbre); };
 _exc_lp_on(on, timbre) = _svf_lp_on(on, tb.lut_approx_svf_g(ci), 2.0, tb.lut_approx_svf_h(ci))
-with { ci = int(timbre * 256.0); };
+with { ci = _timbre_index(timbre); };
 
 //---------------------------------------`(el.)bow_flow`--------------------------------
 // The bow exciter, `ProcessFlow` with parameter 0.7, then the exciter's low-pass: a
@@ -529,7 +542,11 @@ blow_granular(w, meta, timbre, sig) = (\(ph).(next(ph), out(ph))) ~ _ : !, _
 with {
     restart_point = int(meta * 32767.0) << 17;
     inc = int(131072.0 * s2r(72.0 * timbre - 60.0));
-    base = int(sig * 8192.0);
+    // The start of the read, kept in the table for any `sig` (a signature beyond the
+    // control's range, a direct call): at most int(0.99 * 8192) = 8110, so that
+    // base + pi + 1 <= 8110 + 32767 + 1 < smp_noise_sample_size (40963). Clamped as an
+    // integer: exact, whatever the float.
+    base = max(0, min(8110, int(sig * 8192.0)));
     next(ph) = _if(_ult(w, tb.restart_prob), restart_point, ph + inc);
     out(ph) = (a + (b - a) * f) / 32768.0
     with {
@@ -617,8 +634,10 @@ _strike_block(rise, g, m, param, timbre, sig, r, damp0, ph0, ps0, pr0, dl0, pd0)
     damping, r_end, damp1, ph1, ps1, pr1, dl1, pd1
 with {
     // SAMPLE_PLAYER: two of the nine samples crossfaded, read at a rate set by timbre.
-    idx = (1.0 - param) * 8.0;
-    ii0 = int(idx);
+    // param beyond 0 .. 1 reads its nearest bound; ii0 is clamped again as an
+    // integer, so that smp_boundaries(ii + 2) stays within its 10 entries.
+    idx = (1.0 - _clip(0.0, 1.0, param)) * 8.0;
+    ii0 = _clip(0, 8, int(idx));
     ii = _if(ii0 == 8, 7, ii0);
     fr = _if(ii0 == 8, 1.0, idx - float(ii0));
     off1 = tb.smp_boundaries(ii);
@@ -1155,14 +1174,16 @@ with {
     gb = (flags : !, !, _);
     env_b = (blk, rise, fall, gb, shape) : ondemand(envelope_block);
     ev = _ramp(blk, env_b, 0.0);
-    st = _ramp(blk, strength_in * 256.0, 0.0);
-    sti = int(st);
-    accent = tb.lut_accent_gain_coarse(sti) * tb.lut_accent_gain_fine(int(256.0 * (st - float(sti))));
+    // The velocity within 0 .. 1 (a note's, never bounded by a slider), and the
+    // indices of the accent's 257-entry tables clamped again as integers.
+    st = _ramp(blk, _clip(0.0, 1.0, strength_in) * 256.0, 0.0);
+    sti = _clip(0, 256, int(st));
+    accent = tb.lut_accent_gain_coarse(sti) * tb.lut_accent_gain_fine(_clip(0, 255, int(256.0 * (st - float(sti)))));
 
     // Strike meta: SAMPLE_PLAYER, MALLET, PLECTRUM, PARTICLES (1 .. 4).
     sm = _hb(mallet);
     meta = _if(sm <= 0.4, sm * 0.625, sm * 1.25 - 0.25) * 4.0;
-    smodel = min(4, 1 + int(meta));
+    smodel = _clip(1, 4, 1 + int(meta));
     sparam = meta - float(int(meta));
     stimbre = _hb(strike_timbre);
 
