@@ -87,7 +87,6 @@ La différence est dans les modes : avec 26 modes au lieu de 52, le module natif
 | `web/` | la version web : page, clavier, MIDI, hôte AudioWorklet du wasm de faust-rs, explorateur en orbite, atlas des sons, orbite des timbres (`make web`, `make web-serve`, `make web-check`, `make web-presets`, `make web-atlas`) ; `web/vendor/faust-orbit-ui` est faust-orbit-ui 0.4.1 |
 | `web/phone/`, `web/pwa.js` | l'application pour téléphone (PWA) que la page fabrique dans son onglet Téléphone : la page de l'application, son clavier et le mouvement (`phone/`), l'onglet (`pwa.js`), les associations de l'accéléromètre (`motion.js`), les QR codes (`qrcode.js`), l'application statique servie depuis son adresse (`play/`, sa configuration par `phone-config.js`) ; servie par `scripts/web_serve.py`, certificats par `scripts/pwa_cert.sh` (`make pwa-cert`) |
 | `paper/` | l'article, `faust-elements.pdf` (`make paper`) |
-| `faust-rs-issues/` | ce que le portage a trouvé dans faust-rs |
 
 ## 4. Utilisation
 
@@ -146,12 +145,6 @@ make web        # web/dsp : la voix et le corps en wasm ; make web-serve, puis h
 - **Le matériel autour de `Part`** : le lissage et l'étalonnage des potentiomètres par le `CvScaler`, les portes de bruit des entrées dans `elements.cc`, le `SoftConvert` 16 bits du codec.
 - Une meta de frappe valant exactement 1, où l'indice de modèle du C++ atteint FLOW : `CvScaler` plafonne le bouton à 0,9995, le curseur aussi.
 - Dans `elements_poly.dsp`, chaque voix a son propre générateur, là où `Part` à plusieurs voix en partagerait un.
-
-## 7. faust-rs
-
-Le portage a trouvé un défaut, conservé avec son cas réduit dans [faust-rs-issues/unbounded-delay](faust-rs-issues/unbounded-delay) : un retard lu à un décalage dont le compilateur ne peut borner l'intervalle (ici, un LFO calculé par une récursion, passé par `int()`) est accepté par faust-rs, qui dimensionne la ligne à 2^31 échantillons. Le compilateur C++ refuse le même programme en donnant l'intervalle dans son message. La classe générée fait alors 8 Gio, et un hôte qui l'alloue sur la pile plante, tandis que faustprobe rend le programme normalement. Le modèle borne désormais ces décalages à la plage que lit le C++. faust-rs a été corrigé depuis (`main-dev` `10b26062`) : il refuse une borne haute d'INT_MAX ou plus et un intervalle couvrant toute la plage des entiers, avec le diagnostic `delay-interval`.
-
-Tout le reste de ce dont le portage avait besoin était là : `ondemand` imbriqué sur trois niveaux (le passe-tout de dispersion dans le pas de la corde dans la corde), à l'intérieur de récursions ; l'arithmétique entière 32 bits qui boucle ; des tables `waveform` de 128 013 échantillons (la voix compile en 1,2 s).
 
 ## Licence
 

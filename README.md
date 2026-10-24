@@ -87,7 +87,6 @@ The difference lies in the modes: with 26 modes instead of 52 the native module 
 | `web/` | the web version: page, keyboard, MIDI, AudioWorklet host of the faust-rs wasm, orbit explorer, atlas of sounds, timbre orbit (`make web`, `make web-serve`, `make web-check`, `make web-presets`, `make web-atlas`); `web/vendor/faust-orbit-ui` is faust-orbit-ui 0.4.1 |
 | `web/phone/`, `web/pwa.js` | the phone app (PWA) the page builds in its Phone tab: the app's page, keyboard and motion (`phone/`), the tab (`pwa.js`), the mappings of the accelerometer (`motion.js`), the QR codes (`qrcode.js`), the static app served from its address (`play/`, its configuration by `phone-config.js`); served by `scripts/web_serve.py`, certificates by `scripts/pwa_cert.sh` (`make pwa-cert`) |
 | `paper/` | the article, `faust-elements.pdf` (`make paper`) |
-| `faust-rs-issues/` | what the port found in faust-rs |
 
 ## 4. Use
 
@@ -146,12 +145,6 @@ make web        # web/dsp: the voice and the body in wasm; make web-serve, then 
 - The **hardware around `Part`**: the CV scaler's pot smoothing and calibration, the input noise gates of `elements.cc`, the 16-bit `SoftConvert` of the codec.
 - A strike meta of exactly 1, where the C++'s model index reaches FLOW: `CvScaler` caps the knob at 0.9995, and so does the slider.
 - In `elements_poly.dsp` each voice has its own generator, where `Part` with several voices would share one.
-
-## 7. faust-rs
-
-The port found one defect, kept with its reduced case in [faust-rs-issues/unbounded-delay](faust-rs-issues/unbounded-delay): a delay read at an offset whose interval the compiler cannot bound (here, an LFO computed by a recursion, through `int()`) is accepted by faust-rs, which sizes the line to 2^31 samples. The C++ compiler refuses the same program with the interval in its message. The generated class is then 8 GiB, and a host that allocates it on the stack crashes, while faustprobe renders the program normally. The model now clamps those offsets to the range the C++ reads. faust-rs has been corrected since (`main-dev` `10b26062`): it refuses an upper bound of `INT_MAX` or more and an interval spanning the whole integer range, with the diagnostic `delay-interval`.
-
-Everything else the port needed was there: `ondemand` nested three deep (the dispersion all-pass inside the string's tick inside the string), inside recursions; 32-bit integer arithmetic with wrap-around; `waveform` tables of 128,013 samples (the voice compiles in 1.2 s).
 
 ## License
 
