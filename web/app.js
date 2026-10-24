@@ -150,17 +150,43 @@ function readRanges() {
   for (const [k, r] of ranges) if (!values.has(k)) values.set(k, r.init);
 }
 
+// The tab shown, remembered by the browser when it allows it.
+const TAB_STORE = "faust-elements-tab";
+let currentTab = (() => {
+  try {
+    return localStorage.getItem(TAB_STORE) || GROUPS[0].id;
+  } catch {
+    return GROUPS[0].id;
+  }
+})();
+
+// One tab per group of controls (exciter, resonator, space...), as on the
+// module's panel; one panel per tab, the others hidden.
 function buildControls() {
   const root = $("controls");
   root.innerHTML = "";
-  for (const g of GROUPS) {
-    const items = CONTROLS.filter((c) => c.group === g.id && ranges.has(c.key));
-    if (!items.length) continue;
-    const box = document.createElement("fieldset");
-    const legend = document.createElement("legend");
-    legend.textContent = g[lang];
-    box.appendChild(legend);
-    for (const c of items) {
+  const groups = GROUPS.filter((g) => CONTROLS.some((c) => c.group === g.id && ranges.has(c.key)));
+  if (!groups.some((g) => g.id === currentTab)) currentTab = groups[0].id;
+  const bar = document.createElement("div");
+  bar.className = "tabs";
+  bar.setAttribute("role", "tablist");
+  root.appendChild(bar);
+  for (const g of groups) {
+    const tab = document.createElement("button");
+    tab.type = "button";
+    tab.className = "tab";
+    tab.id = `tab-${g.id}`;
+    tab.textContent = g[lang];
+    tab.setAttribute("role", "tab");
+    tab.setAttribute("aria-controls", `panel-${g.id}`);
+    tab.addEventListener("click", () => showTab(g.id));
+    bar.appendChild(tab);
+    const panel = document.createElement("div");
+    panel.className = "panel";
+    panel.id = `panel-${g.id}`;
+    panel.setAttribute("role", "tabpanel");
+    panel.setAttribute("aria-labelledby", tab.id);
+    for (const c of CONTROLS.filter((x) => x.group === g.id && ranges.has(x.key))) {
       const r = ranges.get(c.key);
       const row = document.createElement("div");
       row.className = "control";
@@ -179,10 +205,36 @@ function buildControls() {
         markPresetModified();
       });
       input.addEventListener("dblclick", () => setControl(c.key, r.init));
-      box.appendChild(row);
+      panel.appendChild(row);
     }
-    root.appendChild(box);
+    root.appendChild(panel);
   }
+  // Arrow keys move between the tabs, as in a tab list.
+  bar.addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    e.stopPropagation();
+    const k = groups.findIndex((g) => g.id === currentTab);
+    const next = groups[(k + (e.key === "ArrowLeft" ? groups.length - 1 : 1)) % groups.length];
+    showTab(next.id);
+    $(`tab-${next.id}`).focus();
+  });
+  showTab(currentTab);
+}
+
+function showTab(id) {
+  currentTab = id;
+  try {
+    localStorage.setItem(TAB_STORE, id);
+  } catch {
+    // Storage refused: the tab is not remembered.
+  }
+  for (const tab of document.querySelectorAll("#controls .tab")) {
+    const on = tab.id === `tab-${id}`;
+    tab.setAttribute("aria-selected", on ? "true" : "false");
+    tab.tabIndex = on ? 0 : -1;
+  }
+  for (const panel of document.querySelectorAll("#controls .panel")) panel.hidden = panel.id !== `panel-${id}`;
 }
 
 function buildPresets() {
@@ -269,6 +321,7 @@ function keyToNote(code) {
 
 function onKeyDown(e) {
   if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT" || e.repeat) return;
+  if (e.target.getAttribute && e.target.getAttribute("role") === "tab") return;
   if (e.code === "ArrowLeft" || e.code === "ArrowRight") {
     octave = Math.max(0, Math.min(7, octave + (e.code === "ArrowLeft" ? -1 : 1)));
     buildKeyboard();
