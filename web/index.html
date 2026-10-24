@@ -44,13 +44,17 @@
         <input type="range" id="velocity" min="1" max="127" value="64">
         <span id="velocity-value" class="value">64</span>
       </label>
+      <label class="sustain"><input type="checkbox" id="sustain"> <span data-text="sustain"></span>
+        <span id="sustain-state" class="pedal-light" aria-hidden="true"></span>
+      </label>
       <span class="octave"><span data-text="octave"></span>
         <button type="button" id="octave-down">←</button><span id="octave-value" class="value"></span><button type="button" id="octave-up">→</button>
       </span>
     </div>
     <p id="preset-help" class="help"></p>
-    <div id="keyboard" class="keyboard"></div>
+    <div class="keyboard-scroll"><div id="keyboard" class="keyboard"></div></div>
     <p class="help" data-text="keysHelp"></p>
+    <p class="help" data-text="sustainHelp"></p>
   </section>
 
   <section id="controls" class="controls"></section>

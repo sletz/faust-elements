@@ -18,7 +18,9 @@ const TEXT = {
     load: "Load", voices: "Voices", level: "Level",
     preset: "Preset", polyphony: "Polyphony", midi: "MIDI input", velocity: "Velocity",
     octave: "Octave", allInputs: "All inputs", noMidi: "No Web MIDI",
-    keysHelp: "Computer keyboard: two rows from Z and Q, ← → change the octave. Double-click a control to reset it.",
+    keysHelp: "Computer keyboard: two rows from Z and Q, ← → change the octave, the space bar holds the notes while it is down. Double-click a control to reset it.",
+    sustain: "Hold notes (pedal)",
+    sustainHelp: "While held, released keys keep sounding, for chords: release the hold to stop them. Also the space bar and a MIDI sustain pedal (CC64). Raise the polyphony for large chords.",
     reset: "reset",
     orbitTab: "Orbit",
     orbitHelp: "Every control is a dot: drag one, or the centre to move them all; Random scatters them. Library opens the presets projected on a plane: click a disc to recall it, drag the cross between discs to morph from one sound to another, double-click to keep the current sound. Play notes while you explore.",
@@ -35,7 +37,9 @@ const TEXT = {
     orbitTab: "Orbite",
     orbitHelp: "Chaque commande est un point : déplacez-en un, ou le centre pour les déplacer tous ; Random les disperse. Library ouvre les préréglages projetés sur un plan : cliquez un disque pour le rappeler, glissez la croix entre les disques pour passer d'un son à l'autre, double-cliquez pour garder le son courant. Jouez des notes pendant l'exploration.",
     orbitCenter: "Ramener toutes les commandes au centre", orbitRandom: "Disperser les commandes au hasard",
-    keysHelp: "Clavier d'ordinateur : deux rangées depuis Z et Q (W et A en AZERTY), ← → changent l'octave. Double-cliquez une commande pour la remettre à zéro.",
+    keysHelp: "Clavier d'ordinateur : deux rangées depuis Z et Q (W et A en AZERTY), ← → changent l'octave, la barre d'espace maintient les notes tant qu'elle est enfoncée. Double-cliquez une commande pour la remettre à zéro.",
+    sustain: "Maintien (pédale)",
+    sustainHelp: "Tant qu'il est actif, les touches relâchées continuent de sonner, pour faire des accords : désactivez-le pour les arrêter. Aussi la barre d'espace et une pédale MIDI (CC64). Augmentez la polyphonie pour les grands accords.",
     reset: "défaut",
   },
 };
@@ -50,7 +54,14 @@ const audio = { ctx: null, node: null, json: null, starting: false };
 const values = new Map();
 const ranges = new Map();
 let octave = 4;
-const held = new Set();
+// A key sounds while one source at least holds it: a pointer, a computer key
+// and a MIDI input can hold the same key; the note is released with the last.
+const sources = new Map(); // key -> set of sources ("p<pointer id>", "kbd", "midi")
+const isHeld = (key) => (sources.get(key)?.size ?? 0) > 0;
+// The keyboard on the page: C1 to C8, in a box that scrolls.
+const FIRST_KEY = 24;
+const LAST_KEY = 108;
+const keyElements = new Map();
 
 function send(message) {
   if (audio.node) audio.node.port.postMessage(message);
@@ -322,44 +333,155 @@ function markPresetModified() {
 }
 
 // Notes.
-function noteOn(key, velocity) {
+// The hold, as a piano's sustain pedal: while it is down a released key keeps
+// sounding (it joins `sustained`), and lifting it releases every such key. It
+// is down while any of its sources is: the switch on the page (latched), the
+// space bar, a MIDI sustain pedal.
+const pedal = { latch: false, space: false, midi: false };
+const sustained = new Set();
+const pedalDown = () => pedal.latch || pedal.space || pedal.midi;
+
+function setPedal(source, down) {
+  pedal[source] = down;
+  if (source === "latch") $("sustain").checked = down;
+  $("sustain-state").classList.toggle("on", pedalDown());
+  if (!pedalDown()) {
+    for (const key of [...sustained]) release(key);
+  }
+}
+
+function showKey(key) {
+  const el = keyElements.get(key);
+  if (!el) return;
+  el.classList.toggle("down", isHeld(key));
+  el.classList.toggle("sustained", !isHeld(key) && sustained.has(key));
+}
+
+/**
+ * A key pressed by a source; a key already sounding is struck again.
+ * @param {number} key - MIDI key
+ * @param {number} velocity - in [0, 1]
+ * @param {string} source - who holds it: "p<pointer id>", "kbd", "midi"
+ */
+function noteOn(key, velocity, source) {
   if (audio.ctx && audio.ctx.state !== "running") audio.ctx.resume().catch(() => {});
+  let s = sources.get(key);
+  if (!s) sources.set(key, (s = new Set()));
+  s.add(source);
+  sustained.delete(key);
   send({ type: "noteOn", key, velocity });
-  held.add(key);
-  const el = document.querySelector(`.key[data-key="${key}"]`);
-  if (el) el.classList.add("down");
+  showKey(key);
 }
 
-function noteOff(key) {
+/**
+ * A key released by a source: the note ends with the last source holding it,
+ * or, while the hold is down, when the hold is lifted.
+ * @param {number} key - MIDI key
+ * @param {string} source - as given to noteOn
+ */
+function noteOff(key, source) {
+  const s = sources.get(key);
+  if (!s || !s.delete(source) || s.size) return;
+  if (pedalDown()) {
+    sustained.add(key);
+    showKey(key);
+  } else {
+    release(key);
+  }
+}
+
+// Sends the release of a key no longer held nor sustained.
+function release(key) {
+  sustained.delete(key);
   send({ type: "noteOff", key });
-  held.delete(key);
-  const el = document.querySelector(`.key[data-key="${key}"]`);
-  if (el) el.classList.remove("down");
+  showKey(key);
 }
 
+const BLACK = [1, 3, 6, 8, 10];
+const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+
+// The keys C1 to C8, each C labelled, built once.
 function buildKeyboard() {
   const kb = $("keyboard");
   kb.innerHTML = "";
-  const first = 12 * (octave + 1);
-  const black = [1, 3, 6, 8, 10];
-  for (let k = first; k < first + 37; k += 1) {
+  keyElements.clear();
+  for (let k = FIRST_KEY; k <= LAST_KEY; k += 1) {
     const d = document.createElement("div");
-    d.className = "key" + (black.includes(k % 12) ? " black" : "");
+    d.className = "key" + (BLACK.includes(k % 12) ? " black" : "");
     d.dataset.key = k;
-    const play = (e) => {
-      e.preventDefault();
-      d.setPointerCapture?.(e.pointerId);
-      // Lower on the key is louder.
-      const rect = d.getBoundingClientRect();
-      const y = Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height));
-      noteOn(k, 0.2 + 0.8 * y);
-    };
-    d.addEventListener("pointerdown", play);
-    d.addEventListener("pointerup", () => noteOff(k));
-    d.addEventListener("pointercancel", () => noteOff(k));
+    if (k % 12 === 0) {
+      const label = document.createElement("span");
+      label.className = "label";
+      label.textContent = NOTE_NAMES[0] + (k / 12 - 1);
+      d.append(label);
+    }
     kb.appendChild(d);
+    keyElements.set(k, d);
+    showKey(k);
   }
+  showOctave();
+}
+
+// The keys the computer keyboard plays (two rows from the octave), marked, and
+// the view scrolled to them.
+function showOctave() {
+  const first = 12 * (octave + 1);
+  for (const [k, el] of keyElements) el.classList.toggle("kbd", k >= first && k <= first + 24);
   $("octave-value").textContent = String(octave);
+  const el = keyElements.get(Math.max(FIRST_KEY, first));
+  const box = $("keyboard").parentElement;
+  if (el && box) box.scrollLeft = Math.max(0, el.offsetLeft - 24);
+}
+
+function setOctave(o) {
+  octave = Math.max(0, Math.min(7, o));
+  showOctave();
+}
+
+// The key under a point of the window, or null.
+function keyAt(x, y) {
+  const el = document.elementFromPoint(x, y)?.closest(".key");
+  return el && el.dataset.key ? { el, key: Number(el.dataset.key) } : null;
+}
+
+// Lower on a key is louder.
+function velocityAt(e, el) {
+  const rect = el.getBoundingClientRect();
+  const y = Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height));
+  return 0.2 + 0.8 * y;
+}
+
+/**
+ * Mouse and touch: one note per pointer, captured by the keyboard, sliding from
+ * key to key (glissando) while the pointer moves, as in faust-coopiano.
+ */
+function initPointer() {
+  const kb = $("keyboard");
+  const pointers = new Map(); // pointer id -> key
+  kb.addEventListener("pointerdown", (e) => {
+    const hit = keyAt(e.clientX, e.clientY);
+    if (!hit) return;
+    e.preventDefault();
+    kb.setPointerCapture(e.pointerId);
+    pointers.set(e.pointerId, hit.key);
+    noteOn(hit.key, velocityAt(e, hit.el), "p" + e.pointerId);
+  });
+  kb.addEventListener("pointermove", (e) => {
+    if (!pointers.has(e.pointerId)) return;
+    const hit = keyAt(e.clientX, e.clientY);
+    const old = pointers.get(e.pointerId);
+    if (!hit || hit.key === old) return;
+    noteOff(old, "p" + e.pointerId);
+    pointers.set(e.pointerId, hit.key);
+    noteOn(hit.key, velocityAt(e, hit.el), "p" + e.pointerId);
+  });
+  const up = (e) => {
+    if (!pointers.has(e.pointerId)) return;
+    noteOff(pointers.get(e.pointerId), "p" + e.pointerId);
+    pointers.delete(e.pointerId);
+  };
+  kb.addEventListener("pointerup", up);
+  kb.addEventListener("pointercancel", up);
 }
 
 // Two rows of the computer keyboard, by physical key, whatever the layout.
@@ -381,22 +503,30 @@ function onKeyDown(e) {
   if (e.target instanceof Element && e.target.closest(".orbit-ui-root")) return;
   if (e.target.getAttribute && e.target.getAttribute("role") === "tab") return;
   if (e.code === "ArrowLeft" || e.code === "ArrowRight") {
-    octave = Math.max(0, Math.min(7, octave + (e.code === "ArrowLeft" ? -1 : 1)));
-    buildKeyboard();
+    setOctave(octave + (e.code === "ArrowLeft" ? -1 : 1));
+    return;
+  }
+  if (e.code === "Space") {
+    e.preventDefault();
+    setPedal("space", true);
     return;
   }
   const n = keyToNote(e.code);
   if (n >= 0 && !pressed.has(e.code)) {
     pressed.set(e.code, n);
-    noteOn(n, Number($("velocity").value) / 127);
+    noteOn(n, Number($("velocity").value) / 127, "kbd:" + e.code);
   }
 }
 
 function onKeyUp(e) {
+  if (e.code === "Space") {
+    setPedal("space", false);
+    return;
+  }
   const n = pressed.get(e.code);
   if (n !== undefined) {
     pressed.delete(e.code);
-    noteOff(n);
+    noteOff(n, "kbd:" + e.code);
   }
 }
 
@@ -436,14 +566,17 @@ async function setupMidi() {
 
 function midi([status, a, b]) {
   const type = status & 0xf0;
-  if (type === 0x90 && b > 0) noteOn(a, b / 127);
-  else if (type === 0x80 || (type === 0x90 && b === 0)) noteOff(a);
+  if (type === 0x90 && b > 0) noteOn(a, b / 127, "midi");
+  else if (type === 0x80 || (type === 0x90 && b === 0)) noteOff(a, "midi");
   else if (type === 0xe0) setControl("performance/modulation", ((b * 128 + a) - 8192) / 8192 * 2);
+  else if (type === 0xb0 && a === 64) setPedal("midi", b >= 64);
   else if (type === 0xb0 && (a === 120 || a === 123)) panic();
 }
 
 function panic() {
-  for (const k of [...held]) noteOff(k);
+  sources.clear();
+  sustained.clear();
+  for (const k of keyElements.keys()) showKey(k);
   send({ type: "panic" });
 }
 
@@ -468,12 +601,16 @@ function init() {
   $("preset").addEventListener("change", () => applyPreset($("preset").value));
   $("polyphony").addEventListener("change", () => send({ type: "polyphony", count: Number($("polyphony").value) }));
   $("velocity").addEventListener("input", () => { $("velocity-value").textContent = $("velocity").value; });
-  $("octave-down").addEventListener("click", () => { octave = Math.max(0, octave - 1); buildKeyboard(); });
-  $("octave-up").addEventListener("click", () => { octave = Math.min(7, octave + 1); buildKeyboard(); });
+  $("sustain").addEventListener("change", () => setPedal("latch", $("sustain").checked));
+  // A window that loses the focus sees no keyup: the space bar lifts the hold.
+  window.addEventListener("blur", () => setPedal("space", false));
+  $("octave-down").addEventListener("click", () => setOctave(octave - 1));
+  $("octave-up").addEventListener("click", () => setOctave(octave + 1));
   window.addEventListener("keydown", onKeyDown);
   window.addEventListener("keyup", onKeyUp);
   applyLanguage();
   buildKeyboard();
+  initPointer();
   setupMidi();
 }
 
