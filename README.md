@@ -134,7 +134,7 @@ make web        # web/dsp: the voice and the body in wasm; make web-serve, then 
 
 ## 7. faust-rs
 
-The port found one defect, kept with its reduced case in [faust-rs-issues/unbounded-delay](faust-rs-issues/unbounded-delay): a delay read at an offset whose interval the compiler cannot bound (here, an LFO computed by a recursion, through `int()`) is accepted by faust-rs, which sizes the line to 2^31 samples. The C++ compiler refuses the same program with the interval in its message. The generated class is then 8 GiB, and a host that allocates it on the stack crashes, while faustprobe renders the program normally. The model now clamps those offsets to the range the C++ reads.
+The port found one defect, kept with its reduced case in [faust-rs-issues/unbounded-delay](faust-rs-issues/unbounded-delay): a delay read at an offset whose interval the compiler cannot bound (here, an LFO computed by a recursion, through `int()`) is accepted by faust-rs, which sizes the line to 2^31 samples. The C++ compiler refuses the same program with the interval in its message. The generated class is then 8 GiB, and a host that allocates it on the stack crashes, while faustprobe renders the program normally. The model now clamps those offsets to the range the C++ reads. faust-rs has been corrected since (`main-dev` `10b26062`): it refuses an upper bound of `INT_MAX` or more and an interval spanning the whole integer range, with the diagnostic `delay-interval`.
 
 Everything else the port needed was there: `ondemand` nested three deep (the dispersion all-pass inside the string's tick inside the string), inside recursions; 32-bit integer arithmetic with wrap-around; `waveform` tables of 128,013 samples (the voice compiles in 1.2 s).
 
