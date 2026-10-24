@@ -263,11 +263,17 @@ function onMessage(m) {
   }
 }
 
-// The ranges and defaults of every control, from the voice's and the body's JSON.
+// What a note writes on its voice: never a control of the patch, or loading a
+// patch (a preset, a dot of the atlas) would retune every sounding note to the
+// sliders' defaults.
+const NOTE_CONTROLS = new Set(["freq", "gain", "gate"]);
+
+// The ranges and defaults of every control of the patch, from the voice's and
+// the body's JSON.
 function readRanges() {
   for (const j of [audio.json.voice, audio.json.body]) {
     for (const item of uiItems(j.ui)) {
-      if (item.min === undefined) continue;
+      if (item.min === undefined || NOTE_CONTROLS.has(controlKey(item.address))) continue;
       ranges.set(controlKey(item.address), {
         min: Number(item.min), max: Number(item.max), step: Number(item.step), init: Number(item.init),
       });
