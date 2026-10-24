@@ -68,10 +68,14 @@ button { font: inherit; }
   .side-split::after { content: ""; position: absolute; top: 0; bottom: 0; left: 5px; width: 2px; border-radius: 1px; background: var(--line); }
   .side-split:hover::after, .side-split:focus-visible::after, .side-split.active::after { background: var(--accent); }
   .side-split:focus-visible { outline: none; }
-  /* The small map fills its column down to the bottom of the orbit. */
+  /* The small map fills its column down to the bottom of the orbit, the
+     atlas its own down to the bottom of the timbre orbit. */
   .orbit-layout .side-column { display: flex; flex-direction: column; }
   .orbit-layout #mini-atlas-root { flex: 1; display: flex; flex-direction: column; min-height: 0; }
   .orbit-layout .atlas-stage.compact { flex: 1; height: auto; min-height: 300px; }
+  .atlas-layout .side-main { display: flex; flex-direction: column; }
+  .atlas-layout #atlas-root { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  .atlas-layout .atlas-stage { flex: 1; height: auto; min-height: 540px; }
 }
 .side-column h3 { margin: 0 0 2px; font-size: 1em; }
 .side-column .help { margin: 0 0 8px; }
@@ -98,7 +102,8 @@ button { font: inherit; }
 .atlas-dot.m2 { background: var(--atlas-m2); }
 .atlas-stage { position: relative; height: 540px; }
 @media (max-width: 600px) { .atlas-stage { height: 420px; } }
-.atlas-stage canvas { display: block; touch-action: none; }
+/* Out of the flow: the frame's height sets the canvas's, never the reverse. */
+.atlas-stage canvas { display: block; position: absolute; left: 0; top: 0; touch-action: none; }
 .atlas-zoom { position: absolute; top: 16px; right: 18px; display: flex; gap: 2px; }
 .atlas-stage.compact .atlas-zoom { top: 12px; right: 12px; }
 .atlas-zoom button { width: 26px; height: 26px; padding: 0; font-size: 15px; line-height: 1; border: 1px solid var(--line); border-radius: 5px; background: var(--panel); color: var(--ink); cursor: pointer; opacity: 0.85; }
