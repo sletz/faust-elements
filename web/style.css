@@ -57,9 +57,17 @@ button { font: inherit; }
 #orbit-root, #timbre-root { height: 560px; border-radius: 6px; overflow: hidden; }
 @media (max-width: 600px) { #orbit-root, #timbre-root { height: 460px; } }
 .side-by-side { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px 20px; }
+.side-split { display: none; }
 @media (min-width: 900px) {
-  .orbit-layout { grid-template-columns: minmax(0, 1fr) 300px; }
-  .atlas-layout { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); }
+  /* The separator stands between the sides; dragging it sets --split-left and
+     --split-right (fractions of the width), the defaults are the layout's. */
+  .side-by-side { column-gap: 4px; }
+  .orbit-layout { grid-template-columns: minmax(0, var(--split-left, 1fr)) 12px minmax(0, var(--split-right, 300px)); }
+  .atlas-layout { grid-template-columns: minmax(0, var(--split-left, 1.25fr)) 12px minmax(0, var(--split-right, 1fr)); }
+  .side-split { display: block; position: relative; cursor: col-resize; touch-action: none; border-radius: 4px; }
+  .side-split::after { content: ""; position: absolute; top: 0; bottom: 0; left: 5px; width: 2px; border-radius: 1px; background: var(--line); }
+  .side-split:hover::after, .side-split:focus-visible::after, .side-split.active::after { background: var(--accent); }
+  .side-split:focus-visible { outline: none; }
 }
 .side-column h3 { margin: 0 0 2px; font-size: 1em; }
 .side-column .help { margin: 0 0 8px; }

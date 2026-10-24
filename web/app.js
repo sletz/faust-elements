@@ -25,6 +25,7 @@ const TEXT = {
     sustain: "Hold notes (pedal)",
     sustainHelp: "While held, released keys keep sounding, for chords: release the hold to stop them. Also the space bar and a MIDI sustain pedal (CC64). Raise the polyphony for large chords.",
     reset: "reset",
+    split: "Drag to share the width between the two sides (arrow keys too); double-click for the default.",
     orbitTab: "Orbit",
     orbitHelp: "Every control is a dot: drag one, or the centre to move them all; Random scatters them. Library opens the presets projected on a plane: click a disc to recall it, drag the cross between discs to morph from one sound to another, double-click to keep the current sound. Play notes while you explore.",
     orbitCenter: "Bring every control back to the centre", orbitRandom: "Scatter the controls at random",
@@ -80,6 +81,7 @@ const TEXT = {
     sustain: "Maintien (pédale)",
     sustainHelp: "Tant qu'il est actif, les touches relâchées continuent de sonner, pour faire des accords : désactivez-le pour les arrêter. Aussi la barre d'espace et une pédale MIDI (CC64). Augmentez la polyphonie pour les grands accords.",
     reset: "défaut",
+    split: "Glissez pour partager la largeur entre les deux côtés (flèches aussi) ; double-cliquez pour revenir au partage par défaut.",
   },
 };
 
@@ -397,6 +399,12 @@ function showTab(id) {
 
 // A main element and, beside it on a wide page (below it otherwise), a column
 // with a title, a help line and more elements.
+// The main view and a column beside it, with a separator between them that
+// shares the width (on wide screens only, where they stand side by side). The
+// share, the left side's fraction, is remembered by the browser per layout.
+const SPLIT_STORE = "faust-elements-split-";
+const SPLIT_MIN = 220; // px, the narrowest side
+
 function sideBySide(main, className, title, help, ...side) {
   const layout = document.createElement("div");
   layout.className = `side-by-side ${className}`;
@@ -411,7 +419,82 @@ function sideBySide(main, className, title, help, ...side) {
   p.className = "help";
   p.textContent = help;
   right.append(h, p, ...side);
-  layout.append(left, right);
+  const split = document.createElement("div");
+  split.className = "side-split";
+  split.tabIndex = 0;
+  split.title = t("split");
+  split.setAttribute("role", "separator");
+  split.setAttribute("aria-orientation", "vertical");
+  split.setAttribute("aria-label", t("split"));
+  layout.append(left, split, right);
+
+  const key = SPLIT_STORE + className;
+  // The left side's fraction of the width, or null for the layout's default.
+  const share = (f) => {
+    if (f == null) {
+      layout.style.removeProperty("--split-left");
+      layout.style.removeProperty("--split-right");
+      split.removeAttribute("aria-valuenow");
+      return;
+    }
+    layout.style.setProperty("--split-left", `${f}fr`);
+    layout.style.setProperty("--split-right", `${1 - f}fr`);
+    split.setAttribute("aria-valuenow", String(Math.round(100 * f)));
+  };
+  const clampShare = (f) => {
+    const width = layout.clientWidth - split.offsetWidth;
+    const min = width > 2 * SPLIT_MIN ? SPLIT_MIN / width : 0.5;
+    return Math.min(Math.max(f, min), 1 - min);
+  };
+  const remember = (f) => {
+    try {
+      if (f == null) localStorage.removeItem(key);
+      else localStorage.setItem(key, String(f));
+    } catch {
+      // Storage refused: the share lasts as long as the page.
+    }
+  };
+  try {
+    const stored = Number(localStorage.getItem(key));
+    if (stored > 0 && stored < 1) share(stored);
+  } catch {
+    // Storage refused: the default share.
+  }
+  const current = () => left.offsetWidth / (left.offsetWidth + right.offsetWidth);
+  let dragging = false;
+  split.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    dragging = true;
+    split.classList.add("active");
+    split.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+  split.addEventListener("pointermove", (e) => {
+    if (!dragging) return;
+    const rect = layout.getBoundingClientRect();
+    const width = rect.width - split.offsetWidth;
+    share(clampShare((e.clientX - rect.left - split.offsetWidth / 2) / width));
+  });
+  const stop = () => {
+    if (!dragging) return;
+    dragging = false;
+    split.classList.remove("active");
+    remember(current());
+  };
+  split.addEventListener("pointerup", stop);
+  split.addEventListener("pointercancel", stop);
+  split.addEventListener("dblclick", () => {
+    share(null);
+    remember(null);
+  });
+  split.addEventListener("keydown", (e) => {
+    const step = { ArrowLeft: -0.02, ArrowRight: 0.02 }[e.key];
+    if (!step) return;
+    e.preventDefault();
+    const f = clampShare(current() + step);
+    share(f);
+    remember(f);
+  });
   return layout;
 }
 
