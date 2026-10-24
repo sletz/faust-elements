@@ -1258,6 +1258,10 @@ function applyLanguage() {
   for (const el of document.querySelectorAll("[data-text]")) el.textContent = t(el.dataset.text);
   $("start").textContent = audio.ctx && audio.ctx.state === "running" ? t("stop") : t("start");
   buildPresets();
+  // The orbit is built again in the new language (its presets' names, its tooltips),
+  // the first time its tab is shown.
+  if (orbit) orbit.destroy();
+  orbit = null;
   if (audio.json) buildControls();
   for (const b of document.querySelectorAll("[data-lang]")) b.classList.toggle("on", b.dataset.lang === lang);
 }

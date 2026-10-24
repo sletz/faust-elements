@@ -65,7 +65,8 @@ function descriptor(voiceJson, bodyJson) {
  *   the orbit (by key)
  * @param {Object} [o.tooltips] - the toolbar's tooltips, localized
  * @returns {{setValues: (entries: Array<[string, number]>) => void, resize: () => void,
- *   presetOf: (values: Map<string, number>) => (string|null)}}
+ *   presetOf: (values: Map<string, number>) => (string|null), destroy: () => void}}
+ *   destroy removes the component (the page builds the orbit again in another language)
  */
 export function createOrbit(container, o) {
   // The component's descriptor; every control's full address, the address by key, and the
@@ -112,6 +113,24 @@ export function createOrbit(container, o) {
   };
   // The presets by the hash of their configuration, the library's key.
   const presetByHash = new Map(o.presets.map((p) => [computeConfigHashSync(configurationOf(p)), p.id]));
+  const presetById = new Map(o.presets.map((p) => [p.id, p]));
+
+  /**
+   * The library's records with the presets named in the page's language. A stored library
+   * keeps the names of the language it was made in; a record that is still a preset (its
+   * configuration's hash) and still bears one of that preset's names is renamed, one the
+   * user renamed in the orbit keeps its name.
+   * @param {Array<Object>} records
+   * @returns {Array<Object>}
+   */
+  function localize(records) {
+    return records.map((r) => {
+      const p = presetById.get(presetByHash.get(r.configHash));
+      if (!p) return r;
+      const names = [p.en[0], p.fr[0]];
+      return !r.name || names.includes(r.name) ? { ...r, name: p[o.lang][0] } : r;
+    });
+  }
 
   // The presets as named library records, the first one the most recent (`lastSeenAt`
   // orders the component's list), in the page's language.
@@ -145,7 +164,9 @@ export function createOrbit(container, o) {
   } catch {
     stored = null;
   }
-  orbit.setLibrary(Array.isArray(stored) && stored.length ? stored : seed());
+  const library = localize(Array.isArray(stored) && stored.length ? stored : seed());
+  orbit.setLibrary(library);
+  save(library);
 
   // Moves the dots of the given controls ([key, value] pairs): the component does not
   // report values set by the host, so `onChange` is not called, and it clears its
@@ -159,7 +180,7 @@ export function createOrbit(container, o) {
 
   // Cmd/Ctrl+Z inside the orbit: the library's history while the calque is
   // open, the parameters' history otherwise (the component's convention).
-  window.addEventListener("keydown", (event) => {
+  const onKey = (event) => {
     if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "z" || event.repeat) return;
     if (!(event.target instanceof Node) || !container.contains(event.target)) return;
     event.preventDefault();
@@ -172,8 +193,17 @@ export function createOrbit(container, o) {
     } else {
       orbit.undoParams();
     }
-  });
+  };
+  window.addEventListener("keydown", onKey);
 
   // `resize` lays the dots out again from the container's size, when the tab is shown.
-  return { setValues, resize: () => orbit.resize(), presetOf };
+  return {
+    setValues,
+    resize: () => orbit.resize(),
+    presetOf,
+    destroy: () => {
+      window.removeEventListener("keydown", onKey);
+      orbit.destroy();
+    },
+  };
 }
