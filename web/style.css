@@ -68,6 +68,10 @@ button { font: inherit; }
   .side-split::after { content: ""; position: absolute; top: 0; bottom: 0; left: 5px; width: 2px; border-radius: 1px; background: var(--line); }
   .side-split:hover::after, .side-split:focus-visible::after, .side-split.active::after { background: var(--accent); }
   .side-split:focus-visible { outline: none; }
+  /* The small map fills its column down to the bottom of the orbit. */
+  .orbit-layout .side-column { display: flex; flex-direction: column; }
+  .orbit-layout #mini-atlas-root { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  .orbit-layout .atlas-stage.compact { flex: 1; height: auto; min-height: 300px; }
 }
 .side-column h3 { margin: 0 0 2px; font-size: 1em; }
 .side-column .help { margin: 0 0 8px; }
