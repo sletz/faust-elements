@@ -43,7 +43,8 @@ function descriptor(voiceJson, bodyJson) {
  * @param {(key: string, value: number) => void} o.onChange - a control moved in
  *   the orbit (by key)
  * @param {Object} [o.tooltips] - the toolbar's tooltips, localized
- * @returns {{setValues: (entries: Array<[string, number]>) => void, resize: () => void}}
+ * @returns {{setValues: (entries: Array<[string, number]>) => void, resize: () => void,
+ *   presetOf: (values: Map<string, number>) => (string|null)}}
  */
 export function createOrbit(container, o) {
   const ui = descriptor(o.voiceJson, o.bodyJson);
@@ -67,15 +68,23 @@ export function createOrbit(container, o) {
     }
   }
 
+  // A preset's configuration: its values over the DSPs' defaults.
+  const configurationOf = (p) => {
+    const configuration = {};
+    for (const a of addresses) {
+      const k = keyOf(a);
+      configuration[a] = k in p.values ? p.values[k] : init.get(a);
+    }
+    return configuration;
+  };
+  // The presets by the hash of their configuration, the library's key.
+  const presetByHash = new Map(o.presets.map((p) => [computeConfigHashSync(configurationOf(p)), p.id]));
+
   // The presets as named library records, the first one the most recent.
   function seed() {
     const now = Date.now();
     return o.presets.map((p, i) => {
-      const configuration = {};
-      for (const a of addresses) {
-        const k = keyOf(a);
-        configuration[a] = k in p.values ? p.values[k] : init.get(a);
-      }
+      const configuration = configurationOf(p);
       return {
         uiHash: orbit.uiHash,
         configHash: computeConfigHashSync(configuration),
@@ -85,6 +94,13 @@ export function createOrbit(container, o) {
       };
     });
   }
+
+  // The preset the current values are exactly, or null.
+  const presetOf = (values) => {
+    const configuration = {};
+    for (const a of addresses) configuration[a] = values.has(keyOf(a)) ? values.get(keyOf(a)) : init.get(a);
+    return presetByHash.get(computeConfigHashSync(configuration)) ?? null;
+  };
 
   let stored = null;
   try {
@@ -118,5 +134,5 @@ export function createOrbit(container, o) {
     }
   });
 
-  return { setValues, resize: () => orbit.resize() };
+  return { setValues, resize: () => orbit.resize(), presetOf };
 }

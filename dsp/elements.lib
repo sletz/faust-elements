@@ -362,7 +362,11 @@ model = _res(nentry("[4]model[tooltip: 0 modal, 1 string, 2 strings]", 0, 0, 2, 
 space = _spc(vslider("[0]space[tooltip: stereo, then reverb; frozen above 1.75]", 0.5, 0, 2, 0.001));
 signature = _unit(vslider("[0]signature", 0.0, 0, 0.99, 0.001));
 mod_frequency = _unit(vslider("[1]mod_frequency[unit:Hz]", 0.5, 0, 2, 0.001));
-mod_offset = _unit(vslider("[2]mod_offset", 0.1, 0, 1, 0.001));
+// The side pickup's amplitudes come from `CosineOscillator::InitApproximate` at
+// mod_offset + the LFO (up to 0.5); past about 1.35 its coefficient exceeds 2 and
+// the 52 amplitudes grow exponentially (to 1e35 at 1.48), so the range stops at
+// 0.5. `Part::Seed` gives the module 0.05 .. 0.15.
+mod_offset = _unit(vslider("[2]mod_offset", 0.1, 0, 0.5, 0.001));
 diffusion = _unit(vslider("[3]diffusion", 0.625, 0, 0.9, 0.001));
 reverb_lp = _unit(vslider("[4]reverb_lp", 0.7, 0, 1, 0.001));
 note = _perf(hslider("[0]note", 69, -48, 160, 0.001));

@@ -184,6 +184,14 @@ export class FaustWasmDsp {
   }
 
   /**
+   * Clears the DSP's state (`instanceClear`: delay lines, recursions), keeping
+   * its controls: what a host does to a DSP whose state has diverged.
+   */
+  clear() {
+    this.exports.instanceClear(0);
+  }
+
+  /**
    * Runs the DSP on `frames` samples (at most `blockSize`) of the channel buffers.
    * @param {number} frames
    */

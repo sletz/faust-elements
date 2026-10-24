@@ -295,7 +295,7 @@ function makeOrbit() {
     values,
     onChange: (key, value) => {
       setControl(key, value, true);
-      markPresetModified();
+      followOrbit();
     },
     tooltips: { centerButton: t("orbitCenter"), randomButton: t("orbitRandom") },
   });
@@ -326,6 +326,23 @@ function applyPreset(id) {
   batching = false;
   if (orbit) orbit.setValues([...values]);
   showPresetHelp();
+}
+
+// After the orbit moved controls (a preset recalled from its library, a morph,
+// a drag), the menu shows the preset the sound now is exactly, else the last
+// one marked modified. Checked once the orbit's burst of changes is over.
+let followTimer = 0;
+function followOrbit() {
+  clearTimeout(followTimer);
+  followTimer = setTimeout(() => {
+    const id = orbit && orbit.presetOf(values);
+    if (id) {
+      $("preset").value = id;
+      showPresetHelp();
+    } else {
+      markPresetModified();
+    }
+  }, 30);
 }
 
 function markPresetModified() {

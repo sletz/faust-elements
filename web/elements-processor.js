@@ -19,6 +19,16 @@
 // - with no voice sounding, the body stops being computed once its output has
 //   stayed below QUIET for a second (a frozen reverb never goes quiet).
 //
+// - a voice whose output is not finite or beyond VOICE_GUARD, or a body whose
+//   output is not finite or beyond BODY_GUARD, has its state cleared
+//   (`instanceClear`) and is silent for that quantum. Elements does diverge:
+//   a lossless string (damping above 0.95) under a strong bow at a high pitch
+//   grows without bound, in the C++ as in the model (to 6e11 within 20 ms),
+//   and a recursion that reaches a NaN stays silent for good. The module
+//   resets its voice when its resonator level passes 200 (`Part::Process`,
+//   the panic not ported to dsp/elements.lib); VOICE_GUARD, far above the
+//   loudest bounded sounds of the model (about 140), plays that part here.
+//
 // The voices compute in calls of 16 frames or multiples of 16, so that each
 // voice's own block grid (elements.lib's `blk`) stays aligned with its calls:
 // a gate changed between two calls is read at the next block, as on the module.
@@ -40,6 +50,8 @@ import { FaustWasmDsp } from "./faust-wasm-dsp.js";
 const QUIET = 1e-5;
 const QUIET_SECONDS = 1;
 const HELD_QUIET_SECONDS = 3;
+const VOICE_GUARD = 1e3;
+const BODY_GUARD = 1e6;
 const STATS_SECONDS = 0.25;
 // The model's block.
 const BLOCK = 16;
@@ -192,6 +204,14 @@ class ElementsProcessor extends AudioWorkletProcessor {
       out[0].set(aux.subarray(0, n));
       if (out[1]) out[1].set(main.subarray(0, n));
       for (let i = 0; i < n; i += 1) peak = Math.max(peak, Math.abs(main[i]), Math.abs(aux[i]));
+      if (!(peak <= BODY_GUARD)) {
+        // NaN fails the comparison too.
+        this.body.clear();
+        out[0].fill(0);
+        if (out[1]) out[1].fill(0);
+        console.warn(`elements: the body diverged (peak ${peak}), its state was cleared`);
+        peak = 0;
+      }
       if (active === 0 && peak < QUIET) {
         this.bodyQuiet += n;
         if (this.bodyQuiet > sampleRate) this.bodyAwake = false;
@@ -224,12 +244,20 @@ class ElementsProcessor extends AudioWorkletProcessor {
     let level = 0;
     for (let c = 0; c < 3; c += 1) {
       const o = v.dsp.output(c);
-      const b = bin[c];
       for (let i = 0; i < frames; i += 1) {
-        b[offset + i] += o[i];
         const a = Math.abs(o[i]);
+        if (!(a <= VOICE_GUARD)) {
+          v.dsp.clear();
+          console.warn(`elements: voice ${v.key} diverged (${o[i]}), its state was cleared`);
+          return 0;
+        }
         if (a > level) level = a;
       }
+    }
+    for (let c = 0; c < 3; c += 1) {
+      const o = v.dsp.output(c);
+      const b = bin[c];
+      for (let i = 0; i < frames; i += 1) b[offset + i] += o[i];
     }
     return level;
   }
