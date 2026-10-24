@@ -2,7 +2,16 @@
 // address without the program name), grouped as on the module's panel, each
 // with its range (read from the DSPs' JSON at start) and its explanation in
 // English and French; and the presets.
+//
+// How it fits: app.js builds a tab per group with a slider per control, and the preset
+// menu; orbit.js seeds its library with the presets; pwa.js lists the controls a phone's
+// motion can drive. Under node, scripts/check_presets.mjs renders every preset and
+// scripts/gen_atlas.mjs places every preset on the atlas: atlas.json refers to the
+// presets by id, so a preset added, changed or renamed asks for `make web-atlas` again.
 
+// The tabs of the controls, in order: `id` (the `group` of a control) and the tab's name
+// in English and French. app.js adds the Orbit, Atlas and Phone tabs after them, and
+// drops a group none of whose controls the DSPs have.
 export const GROUPS = [
   { id: "exciter", en: "Exciter", fr: "Excitateur" },
   { id: "resonator", en: "Resonator", fr: "Résonateur" },
@@ -11,6 +20,16 @@ export const GROUPS = [
   { id: "performance", en: "Performance", fr: "Jeu" },
 ];
 
+// One entry per control shown, in the order of the page:
+// - key: the Faust address without the program name, as the DSPs' JSON gives it;
+// - group: the id of its tab (GROUPS);
+// - step (optional): 1 for a control that takes whole values (the model); the page reads
+//   the step from the DSPs' JSON, this field states it here;
+// - en, fr: [label, explanation].
+//
+// The ranges and defaults come from the DSPs' JSON (app.js readRanges): a control the
+// DSPs do not have is not shown. The note's controls (freq, gain, gate) are not listed:
+// the keyboard plays them.
 export const CONTROLS = [
   {
     key: "exciter/envelope", group: "exciter",
@@ -119,57 +138,70 @@ export const CONTROLS = [
   },
 ];
 
-// A preset starts from the defaults of the DSPs (Part::Init) and sets these.
+// A preset starts from the defaults of the DSPs (Part::Init) and sets these. Each one has
+// an `id` (the menu's value, the `preset` of atlas.json's points), its [name,
+// description] in English and French, and `values`, control values by key, set over the
+// defaults. The comment above each one gives its exciter and resonator.
 export const PRESETS = [
   {
+    // The module at power-up: no value set, every control at its default.
     id: "default",
     en: ["Module defaults", "The patch of Part::Init: a mallet on a slightly stretched resonator, a little reverb."],
     fr: ["Réglages du module", "Le patch de Part::Init : un maillet sur un résonateur un peu étiré, un peu de réverbération."],
     values: {},
   },
+  // The first eight after the defaults: one of each family, then the families one by one.
   {
+    // Strike, modal: the mallet pulse (0.5) on harmonic modes (geometry 0.27), dark.
     id: "marimba",
     en: ["Wooden bar", "A soft mallet on harmonic modes with dark, quick highs."],
     fr: ["Lame de bois", "Un maillet doux sur des modes harmoniques aux aigus sombres et brefs."],
     values: { "exciter/mallet": 0.5, "exciter/strike_timbre": 0.35, "resonator/geometry": 0.27, "resonator/brightness": 0.3, "resonator/damping": 0.35, "resonator/position": 0.25, "space/space": 0.7 },
   },
   {
+    // Strike, modal: a recorded mallet (0.3) on stretched modes (0.78), bright.
     id: "bell",
     en: ["Bell", "A recorded mallet on stretched, bright, long modes."],
     fr: ["Cloche", "Un maillet enregistré sur des modes étirés, brillants et longs."],
     values: { "exciter/strike": 0.8, "exciter/mallet": 0.3, "exciter/strike_timbre": 0.7, "resonator/geometry": 0.78, "resonator/brightness": 0.75, "resonator/damping": 0.15, "resonator/position": 0.4, "space/space": 1.1 },
   },
   {
+    // Bow, modal: the strike off, an ADSR contour (0.5), stretched bright modes.
     id: "glass",
     en: ["Bowed glass", "The bow alone, ADSR, on bright stretched modes."],
     fr: ["Verre frotté", "L'archet seul, en ADSR, sur des modes étirés et brillants."],
     values: { "exciter/strike": 0, "exciter/bow": 0.85, "exciter/envelope": 0.5, "exciter/bow_timbre": 0.6, "resonator/geometry": 0.85, "resonator/brightness": 0.65, "resonator/damping": 0.6, "space/space": 1.0 },
   },
   {
+    // Blow, modal: above 2/3, the reed and the bore, on harmonic modes.
     id: "pipe",
     en: ["Reed pipe", "The blow above 2/3: the reed and the bore, on harmonic modes."],
     fr: ["Tuyau à anche", "Le souffle au-delà de 2/3 : l'anche et le tuyau, sur des modes harmoniques."],
     values: { "exciter/strike": 0, "exciter/blow": 0.75, "exciter/flow": 0.35, "exciter/blow_timbre": 0.45, "exciter/envelope": 0.55, "resonator/geometry": 0.27, "resonator/brightness": 0.4, "resonator/damping": 0.45, "space/space": 0.9 },
   },
   {
+    // Blow, modal: below 2/3, granular noise only, a gusty flow (0.8).
     id: "breath",
     en: ["Breath", "Gusty granular noise through a plate-like resonator."],
     fr: ["Souffle", "Un bruit granulaire en rafales dans un résonateur comme une plaque."],
     values: { "exciter/strike": 0, "exciter/blow": 0.6, "exciter/flow": 0.8, "exciter/blow_timbre": 0.7, "exciter/envelope": 0.75, "resonator/geometry": 0.6, "resonator/brightness": 0.6, "resonator/damping": 0.55, "space/space": 1.2 },
   },
   {
+    // Strike, one string (model 1): the plectrum (mallet 0.7).
     id: "pluck",
     en: ["Plucked string", "One string and the plectrum, with its palm mute on release."],
     fr: ["Corde pincée", "Une corde et le plectre, avec son étouffement au relâché."],
     values: { "resonator/model": 1, "exciter/mallet": 0.7, "exciter/strike": 0.7, "resonator/geometry": 0.25, "resonator/brightness": 0.6, "resonator/damping": 0.45, "space/space": 0.6 },
   },
   {
+    // Strike, five strings (model 2): the geometry chooses the chord.
     id: "chord",
     en: ["String chord", "Five strings tuned to a chord: move the geometry to change it."],
     fr: ["Accord de cordes", "Cinq cordes accordées sur un accord : la géométrie le change."],
     values: { "resonator/model": 2, "exciter/strike": 0.7, "resonator/geometry": 0.45, "resonator/brightness": 0.55, "resonator/damping": 0.6, "space/space": 1.1 },
   },
   {
+    // Strike, modal: particles (mallet above 0.8) on metallic modes, a large space.
     id: "rain",
     en: ["Particles", "Bouncing particles on a metallic resonator, in a large space."],
     fr: ["Particules", "Des particules qui rebondissent sur un résonateur métallique, dans un grand espace."],
@@ -177,24 +209,28 @@ export const PRESETS = [
   },
   // Percussion.
   {
+    // Strike, modal: a recorded mallet (0.2) on the most stretched modes (0.95).
     id: "gong",
     en: ["Gong", "A recorded mallet on strongly stretched modes that ring long, in a large space."],
     fr: ["Gong", "Un maillet enregistré sur des modes très étirés qui résonnent longtemps, dans un grand espace."],
     values: { "exciter/strike": 0.85, "exciter/mallet": 0.2, "exciter/strike_timbre": 0.4, "resonator/geometry": 0.95, "resonator/brightness": 0.65, "resonator/damping": 0.1, "resonator/position": 0.3, "space/space": 1.4 },
   },
   {
+    // Strike, modal: the mallet pulse (0.5) on moderately stretched modes (0.45).
     id: "steeldrum",
     en: ["Steel drum", "A mallet on moderately stretched, bright modes."],
     fr: ["Steel drum", "Un maillet sur des modes moyennement étirés et brillants."],
     values: { "exciter/mallet": 0.5, "exciter/strike_timbre": 0.6, "resonator/geometry": 0.45, "resonator/brightness": 0.65, "resonator/damping": 0.35, "resonator/position": 0.2, "space/space": 0.8 },
   },
   {
+    // Strike, modal: a recorded hit (0.1) on compressed partials (0.15), little space.
     id: "woodblock",
     en: ["Wood block", "A short recorded hit on a damped, dark resonator: dry."],
     fr: ["Bloc de bois", "Un coup enregistré bref sur un résonateur amorti et sombre : sec."],
     values: { "exciter/strike": 0.9, "exciter/mallet": 0.1, "exciter/strike_timbre": 0.7, "resonator/geometry": 0.15, "resonator/brightness": 0.25, "resonator/damping": 0.05, "resonator/position": 0.4, "space/space": 0.3 },
   },
   {
+    // Strike, modal: a recorded mallet (0.25), picked up near the edge (position 0.12).
     id: "kalimba",
     en: ["Kalimba", "A recorded mallet on slightly stretched modes, picked up near the edge."],
     fr: ["Kalimba", "Un maillet enregistré sur des modes légèrement étirés, captés près du bord."],
@@ -202,24 +238,28 @@ export const PRESETS = [
   },
   // Bowed and blown.
   {
+    // Bow, modal: a gentle bow (0.6) on stretched (0.72), bright modes.
     id: "bowl",
     en: ["Singing bowl", "A gentle bow on stretched, bright modes that barely decay."],
     fr: ["Bol chantant", "Un archet doux sur des modes étirés et brillants qui s'éteignent à peine."],
     values: { "exciter/strike": 0, "exciter/bow": 0.6, "exciter/bow_timbre": 0.4, "exciter/envelope": 0.65, "resonator/geometry": 0.72, "resonator/brightness": 0.8, "resonator/damping": 0.1, "resonator/position": 0.35, "space/space": 1.2 },
   },
   {
+    // Bow, modal: a strong bow (0.95) on dark harmonic modes.
     id: "lowbow",
     en: ["Low bow", "The bow alone on harmonic modes, dark, with an ADSR: play it low."],
     fr: ["Archet grave", "L'archet seul sur des modes harmoniques, sombre, en ADSR : à jouer grave."],
     values: { "exciter/strike": 0, "exciter/bow": 0.95, "exciter/bow_timbre": 0.35, "exciter/envelope": 0.5, "resonator/geometry": 0.27, "resonator/brightness": 0.3, "resonator/damping": 0.75, "resonator/position": 0.18, "space/space": 0.9 },
   },
   {
+    // Blow, modal: below 2/3 (no reed), an even flow (0.15), harmonic modes.
     id: "flute",
     en: ["Flute", "A steady breath without the reed on damped harmonic modes."],
     fr: ["Flûte", "Un souffle régulier, sans l'anche, sur des modes harmoniques amortis."],
     values: { "exciter/strike": 0, "exciter/blow": 0.35, "exciter/flow": 0.15, "exciter/blow_timbre": 0.6, "exciter/envelope": 0.55, "resonator/geometry": 0.27, "resonator/brightness": 0.5, "resonator/damping": 0.75, "resonator/position": 0.25, "space/space": 0.9 },
   },
   {
+    // Blow, modal: the reed (0.9), harmonic modes picked up at their middle (0.5).
     id: "clarinet",
     en: ["Clarinet", "The reed, dark, on harmonic modes picked up in the middle (odd partials)."],
     fr: ["Clarinette", "L'anche, sombre, sur des modes harmoniques captés au milieu (partiels impairs)."],
@@ -227,24 +267,28 @@ export const PRESETS = [
   },
   // Strings.
   {
+    // Strike, one string: the plectrum (0.65), a long ring.
     id: "harp",
     en: ["Harp", "One string and the plectrum, ringing long, with some space."],
     fr: ["Harpe", "Une corde et le plectre, qui résonne longtemps, avec un peu d'espace."],
     values: { "resonator/model": 1, "exciter/strike": 0.85, "exciter/mallet": 0.65, "exciter/strike_timbre": 0.45, "resonator/geometry": 0.25, "resonator/brightness": 0.6, "resonator/damping": 0.7, "resonator/position": 0.2, "space/space": 1.0 },
   },
   {
+    // Strike, one string: positive dispersion (geometry 0.55), near the bridge (0.12).
     id: "koto",
     en: ["Dispersive string", "One string with positive dispersion (geometry above 0.26), plucked near the bridge, like a koto or a sitar."],
     fr: ["Corde dispersive", "Une corde à dispersion positive (géométrie au-delà de 0,26), pincée près du chevalet, comme un koto ou un sitar."],
     values: { "resonator/model": 1, "exciter/mallet": 0.72, "exciter/strike_timbre": 0.7, "resonator/geometry": 0.55, "resonator/brightness": 0.8, "resonator/damping": 0.55, "resonator/position": 0.12, "space/space": 0.7 },
   },
   {
+    // Strike, one string: the plectrum near the end of its range (0.78), a short ring.
     id: "muted",
     en: ["Muted string", "One string, the plectrum at the end of its range, a short damping."],
     fr: ["Corde étouffée", "Une corde, le plectre en fin de plage, un amortissement court."],
     values: { "resonator/model": 1, "exciter/strike": 0.75, "exciter/mallet": 0.78, "resonator/geometry": 0.25, "resonator/brightness": 0.45, "resonator/damping": 0.25, "resonator/position": 0.3, "space/space": 0.4 },
   },
   {
+    // Bow, five strings: an ADSR contour (0.55).
     id: "bowedchord",
     en: ["Bowed chord", "Five strings tuned to a chord, sustained by the bow, with an ADSR."],
     fr: ["Accord frotté", "Cinq cordes accordées sur un accord, entretenues par l'archet, en ADSR."],
@@ -252,18 +296,21 @@ export const PRESETS = [
   },
   // Textures and space.
   {
+    // Strike, modal: particles (0.86) on harmonic modes (0.3).
     id: "rainstick",
     en: ["Rain stick", "Particles on a harmonic resonator with little damping: hold the key."],
     fr: ["Bâton de pluie", "Des particules sur un résonateur harmonique peu amorti : tenir la touche."],
     values: { "exciter/strike": 0.7, "exciter/mallet": 0.86, "exciter/strike_timbre": 0.5, "resonator/geometry": 0.3, "resonator/brightness": 0.45, "resonator/damping": 0.6, "space/space": 1.0 },
   },
   {
+    // Strike, modal: particles (0.95) on bell-like modes (0.8), a large space.
     id: "chimes",
     en: ["Wind chimes", "Particles on a bell-like resonator, bright and long, in a large space."],
     fr: ["Carillon à vent", "Des particules sur un résonateur en cloche, brillant et long, dans un grand espace."],
     values: { "exciter/mallet": 0.95, "exciter/strike_timbre": 0.85, "resonator/geometry": 0.8, "resonator/brightness": 0.8, "resonator/damping": 0.2, "space/space": 1.4 },
   },
   {
+    // Bow, modal: a sustained contour (0.6) in a large reverb (space 1.5).
     id: "drone",
     en: ["Drone", "The bow on a sustained resonator in a large reverb; move space past 1.75 to freeze the reverb with what it holds."],
     fr: ["Drone", "L'archet sur un résonateur entretenu dans une grande réverbération ; passez l'espace au-delà de 1,75 pour la figer avec ce qu'elle contient."],

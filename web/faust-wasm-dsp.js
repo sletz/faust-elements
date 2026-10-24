@@ -9,6 +9,11 @@
 // `setParamValue`, the audio heap from JSON `size` on, the math functions
 // imported from `env` (`_sin`, `_powf`...), `-double` making the audio
 // buffers and the control values float64.
+//
+// How it fits: the AudioWorklet makes one FaustWasmDsp per voice and one for the body;
+// describe.js makes a fresh pair for every offline render (the atlas, the worker); the
+// node scripts (web_check, check_bounds, check_presets, fuzz_web, gen_atlas) use it to
+// run the same code as the page. orbit-imports.js re-exports uiItems.
 
 /**
  * The `env` imports of a Faust wasm module: the C math functions its code calls.
@@ -29,6 +34,7 @@ export function mathImports() {
   const isnan = (x) => (Number.isNaN(x) ? 1 : 0);
   const isinf = (x) => (Number.isFinite(x) || Number.isNaN(x) ? 0 : 1);
   const exp10 = (x) => 10 ** x;
+  // The import object, filled below.
   const env = {};
   // Every function under both of its names: `_name` and `_namef`.
   const table = {
@@ -138,7 +144,8 @@ export class FaustWasmDsp {
     // `init` = classInit then instanceInit, on the DSP at address 0.
     this.exports.init(0, sampleRate);
 
-    // Control offsets, by address and by key.
+    // Control offsets (the JSON `index`: a byte offset into the DSP structure), by key;
+    // the groups and the controls without an index (none in practice) are left out.
     this.controls = new Map();
     for (const item of uiItems(json.ui)) {
       if (item.address !== undefined && Number.isInteger(item.index)) {
@@ -193,7 +200,8 @@ export class FaustWasmDsp {
 
   /**
    * Runs the DSP on `frames` samples (at most `blockSize`) of the channel buffers.
-   * @param {number} frames
+   * @param {number} frames - the number of frames, 1 to blockSize: the input buffers are
+   *   read and the output buffers written from their first sample
    */
   compute(frames) {
     this.exports.compute(0, frames, this.inputsPtr, this.outputsPtr);

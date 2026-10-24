@@ -11,18 +11,33 @@
 // Its library starts with the presets at their measured percentiles: the calque
 // lays them out by timbre, and morphing between its discs asks for the sounds
 // in between.
+//
+// How it fits: app.js builds the timbre orbit in the column beside the atlas, the first
+// time the Atlas tab is shown (showMap). Its `onTarget` is app.js's askTimbre, which
+// loads nearestSound's patch at once and, once the dots rest, asks measure-worker.js for
+// a local search; `setValues` moves the dots to the current sound's percentiles when the
+// sound is changed elsewhere. app.js uses percentile and quantile too, to turn measures
+// into percentiles and back.
 import { OrbitUI, computeConfigHashSync } from "./orbit-imports.js";
 
+// The model's control key: the nearest sound prefers the current model.
 const MODEL = "resonator/model";
 
-// The rank of v among sorted values, in [0, 1], linear between them (as in
-// measure-worker.js).
+/**
+ * The rank of v among sorted values, in [0, 1], linear between them (as in
+ * measure-worker.js).
+ * @param {number[]} sorted - values in ascending order (one descriptor over the atlas)
+ * @param {number} v - a value of that descriptor
+ * @returns {number} 0 at or below the smallest value, 1 at or above the largest
+ */
 export function percentile(sorted, v) {
   const n = sorted.length;
   if (v <= sorted[0]) return 0;
   if (v >= sorted[n - 1]) return 1;
   let lo = 0;
   let hi = n - 1;
+  // Binary search for the pair of neighbours sorted[lo] <= v < sorted[hi], then the
+  // fraction of the way between them (`|| 1`: equal neighbours do not divide by zero).
   while (hi - lo > 1) {
     const mid = (lo + hi) >> 1;
     if (sorted[mid] <= v) lo = mid;
@@ -31,7 +46,13 @@ export function percentile(sorted, v) {
   return (lo + (v - sorted[lo]) / (sorted[hi] - sorted[lo] || 1)) / (n - 1);
 }
 
-// The value at rank q in [0, 1] among sorted values, the inverse of percentile.
+/**
+ * The value at rank q in [0, 1] among sorted values, the inverse of percentile: linear
+ * between the two values around q * (n - 1).
+ * @param {number[]} sorted - values in ascending order
+ * @param {number} q - a rank, clamped to [0, 1]
+ * @returns {number} a value of the descriptor
+ */
 export function quantile(sorted, q) {
   const x = Math.min(1, Math.max(0, q)) * (sorted.length - 1);
   const i = Math.floor(x);
@@ -45,10 +66,12 @@ export function quantile(sorted, q) {
  * @returns {{table: Object<string, number[]>, ranks: number[][]}}
  */
 export function timbreTable(atlas) {
+  // Each descriptor's column of the atlas, sorted (a point's `d` follows `atlas.axes`).
   const table = {};
   atlas.axes.forEach((a, j) => {
     table[a] = atlas.points.map((p) => p.d[j]).sort((x, y) => x - y);
   });
+  // Each sound's percentiles, in the order of `atlas.axes`, computed once for nearestSound.
   const ranks = atlas.points.map((p) => atlas.axes.map((a, j) => percentile(table[a], p.d[j])));
   return { table, ranks };
 }
@@ -67,8 +90,12 @@ export function timbreTable(atlas) {
  */
 export function nearestSound(atlas, t, target, model) {
   const m = atlas.controls.indexOf(MODEL);
+  // The target in the order of `atlas.axes`, then each sound's mean square distance to it.
   const goal = atlas.axes.map((a) => target[a]);
   const dist = t.ranks.map((r) => r.reduce((s, q, j) => s + (q - goal[j]) ** 2, 0) / r.length);
+  // The nearest sound of all, and the nearest of the current model; the latter wins when
+  // it is within 15 % of the former (plus a small absolute margin for targets met almost
+  // exactly), so that the model does not flicker between nearly equal sounds.
   let best = 0;
   let bestSame = -1;
   for (let i = 0; i < dist.length; i += 1) {
@@ -76,11 +103,15 @@ export function nearestSound(atlas, t, target, model) {
     if (atlas.points[i].v[m] === model && (bestSame < 0 || dist[i] < dist[bestSame])) bestSame = i;
   }
   const i = bestSame >= 0 && dist[bestSame] <= 1.15 * dist[best] + 1e-4 ? bestSame : best;
+  // The sound's controls by key (a point's `v` follows `atlas.controls`).
   const patch = Object.fromEntries(atlas.controls.map((k, j) => [k, atlas.points[i].v[j]]));
   return { patch, index: i };
 }
 
 /**
+ * Builds the timbre orbit: one dot per descriptor, its value a percentile in [0, 1], and
+ * a library seeded with the presets at their measured percentiles. Unlike orbit.js's,
+ * this library is not stored: it is made again from the atlas each time.
  * @param {HTMLElement} container - the element the orbit renders into
  * @param {Object} o
  * @param {Object} o.atlas - web/atlas.json
@@ -95,6 +126,8 @@ export function nearestSound(atlas, t, target, model) {
  */
 export function createTimbreOrbit(container, o) {
   const { atlas } = o;
+  // The UI descriptor the component expects, as a Faust JSON `ui`: one slider per
+  // descriptor, at /timbre/<descriptor>, from 0 to 1 by 0.01, starting at the median.
   const address = (a) => `/timbre/${a}`;
   const ui = [{
     type: "vgroup",
@@ -103,6 +136,8 @@ export function createTimbreOrbit(container, o) {
       type: "hslider", label: o.axes[a][0], address: address(a), min: 0, max: 1, step: 0.01, init: 0.5,
     })),
   }];
+  // The percentiles asked for, by descriptor, updated dot by dot; `frame` is the pending
+  // animation frame that reports them.
   const target = Object.fromEntries(atlas.axes.map((a) => [a, 0.5]));
   let frame = 0;
   const orbit = new OrbitUI(container, {
@@ -120,7 +155,8 @@ export function createTimbreOrbit(container, o) {
     tooltips: o.tooltips,
   });
 
-  // The presets at their percentiles, the first one the most recent.
+  // The presets at their percentiles, the first one the most recent (`lastSeenAt` orders
+  // the component's list), rounded as the sliders' step.
   const now = Date.now();
   const records = atlas.points.filter((p) => p.preset).map((p, i) => {
     const configuration = {};
@@ -137,7 +173,9 @@ export function createTimbreOrbit(container, o) {
   });
   orbit.setLibrary(records);
 
-  // Cmd/Ctrl+Z inside this orbit, as in orbit.js.
+  // Cmd/Ctrl+Z inside this orbit, as in orbit.js: with Shift a redo; the library's
+  // history while the calque is open, the dots' history otherwise. The listener is on the
+  // window, filtered by the container, and removed by destroy.
   const onKey = (event) => {
     if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "z" || event.repeat) return;
     if (!(event.target instanceof Node) || !container.contains(event.target)) return;
@@ -164,7 +202,9 @@ export function createTimbreOrbit(container, o) {
       }
       orbit.setParams(config);
     },
+    // The component lays its dots out from its size: called when the tab is shown again.
     resize: () => orbit.resize(),
+    // Removes the key listener and the component, when app.js rebuilds the tabs.
     destroy: () => {
       window.removeEventListener("keydown", onKey);
       orbit.destroy();

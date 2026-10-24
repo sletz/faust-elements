@@ -9,16 +9,32 @@
 // for the velocity (gain): A3 is played for half a second with the control at
 // min - (max - min) - 1, then at min, and compared; then at max + (max - min) + 1
 // against max. Prints one line per control and exits 1 when one differs.
+//
+// The distance past the bound is the control's span plus 1, so that a control of
+// small range (a few tenths) is still written well outside it. "Exactly" is bit
+// for bit: the comparison uses Object.is, under which two NaN agree and 0 and -0
+// do not. Inputs: web/dsp (make web). Output, on stdout: `ok` or `FAIL`, the
+// control's key and both verdicts, one line per control, then the count of
+// writes that differ from their bound.
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { FaustWasmDsp, controlKey, uiItems } from "../web/faust-wasm-dsp.js";
 
+// The repository root, from this file's location.
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+// The model's rate, Hz, the frames per compute call (a Web Audio quantum), and the
+// length of each render: half a second, the key held throughout.
 const SR = 32000;
 const QUANTUM = 128;
 const FRAMES = SR / 2;
 
+/**
+ * Loads one of the page's compiled DSPs.
+ * @param {string} name - "voice" or "body", the stem of web/dsp/NAME.{json,wasm}
+ * @returns {{json: Object, module: WebAssembly.Module}} the program's JSON
+ *   description and its compiled module, the argument FaustWasmDsp expects
+ */
 function load(name) {
   const json = JSON.parse(readFileSync(join(ROOT, "web/dsp", name + ".json"), "utf8"));
   const module = new WebAssembly.Module(readFileSync(join(ROOT, "web/dsp", name + ".wasm")));
@@ -29,6 +45,15 @@ const voiceCode = load("voice");
 const bodyCode = load("body");
 
 // The note with one value written raw into both DSPs; the stereo output.
+/**
+ * Plays A3 (220 Hz, velocity 0.7) for FRAMES frames, one voice into the body,
+ * from fresh instances, every other control at its default.
+ * @param {string} key - the control written ("exciter/bow"; "gain" overrides the
+ *   velocity); a DSP that does not have it ignores it
+ * @param {number} value - the value written, unclamped
+ * @returns {Float64Array} the body's main and aux outputs, interleaved: frame f at
+ *   2 f and 2 f + 1
+ */
 function render(key, value) {
   const voice = new FaustWasmDsp(voiceCode, SR, QUANTUM);
   const body = new FaustWasmDsp(bodyCode, SR, QUANTUM);
@@ -36,10 +61,12 @@ function render(key, value) {
   voice.set("gain", 0.7);
   voice.set(key, value);
   body.set(key, value);
+  // The gate last, so that the note starts with every control already written.
   voice.set("gate", 1);
   const out = new Float64Array(2 * FRAMES);
   for (let t = 0; t < FRAMES; t += QUANTUM) {
     voice.compute(QUANTUM);
+    // The voice's outputs (raw, center, side) are the body's inputs.
     for (let c = 0; c < 3; c += 1) body.input(c).set(voice.output(c));
     body.compute(QUANTUM);
     for (let i = 0; i < QUANTUM; i += 1) {
@@ -51,11 +78,21 @@ function render(key, value) {
 }
 
 // The first differing sample, or -1.
+/**
+ * Compares two renders bit for bit (Object.is).
+ * @param {Float64Array} a
+ * @param {Float64Array} b - of the same length as `a`
+ * @returns {number} the index of the first differing sample (interleaved, so the
+ *   frame is the index / 2), or -1 when the renders are identical
+ */
 function differ(a, b) {
   for (let i = 0; i < a.length; i += 1) if (!Object.is(a[i], b[i])) return i;
   return -1;
 }
 
+// The controls checked, by key, with their declared [min, max]: every control with
+// a range of both DSPs but the note's frequency and gate, once each (a control the
+// voice and the body share is listed once). The velocity, `gain`, is included.
 const controls = new Map();
 for (const j of [voiceCode.json, bodyCode.json]) {
   for (const item of uiItems(j.ui)) {
@@ -69,6 +106,7 @@ let failed = 0;
 for (const [key, [min, max]] of controls) {
   const span = max - min;
   const verdicts = [];
+  // Below the range against min, then above it against max.
   for (const [outside, bound] of [[min - span - 1, min], [max + span + 1, max]]) {
     const a = render(key, outside);
     const b = render(key, bound);
@@ -78,6 +116,7 @@ for (const [key, [min, max]] of controls) {
       verdicts.push(`${outside} as ${bound}`);
     } else {
       failed += 1;
+      // `i >> 1`: the interleaved index to the frame.
       verdicts.push(`${outside}: ${finite ? "" : "non-finite, "}differs from ${bound} at frame ${i >> 1} (${a[i]} vs ${b[i]})`);
     }
   }

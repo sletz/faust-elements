@@ -1,6 +1,22 @@
 // The page: starts the AudioWorklet at 32 kHz with the voice and the body
 // compiled by faust-rs (web/dsp), builds the controls and the presets, and plays
 // notes from the on-screen keyboard, the computer keyboard and Web MIDI.
+//
+// It also ties together the views of the sound: the tabs of controls (controls.js), the
+// orbit of the controls (orbit.js), the atlas of sounds and its small map (atlas.js), the
+// timbre orbit (timbre.js) and the phone app (pwa.js). Every change of a control goes
+// through setControl, which sends it to the worklet and moves the slider, the orbit and,
+// through a measure by the worker, the diamond of the current sound on the atlas.
+//
+// Messages to the AudioWorklet (elements-processor.js): noteOn, noteOff, control,
+// polyphony, panic; from it: ready, and stats every 0.25 s (load, voices, level meters).
+// Messages to the Worker (measure-worker.js): init, measure, search; from it: measured
+// and found.
+//
+// The file in order: the texts, the state, the controls and the audio start, the tabs and
+// the side-by-side layout, the atlas, the current sound and the timbre orbit, the orbit
+// and the presets, the notes and the hold, the on-screen keyboard, the computer keyboard,
+// Web MIDI, the language, and init.
 import { CONTROLS, GROUPS, PRESETS } from "./controls.js";
 import { controlKey, uiItems } from "./faust-wasm-dsp.js";
 import { createAtlas } from "./atlas.js";
@@ -9,10 +25,14 @@ import { createOrbit } from "./orbit.js";
 import { createPhoneTab } from "./pwa.js";
 import { createTimbreOrbit, nearestSound, percentile, quantile, timbreTable } from "./timbre.js";
 
+// The compiled DSPs, voice.{json,wasm} and body.{json,wasm}, written by `make web`.
 const DSP_DIR = "dsp/";
 // The module's sample rate: every table and delay of the model is computed for it.
 const SAMPLE_RATE = 32000;
 
+// The page's words in English and French, by key. The elements of index.html with a
+// `data-text` attribute take theirs from here (applyLanguage); the controls' and the
+// presets' are in controls.js.
 const TEXT = {
   en: {
     title: "Mutable Instruments Elements in Faust",
@@ -86,6 +106,8 @@ const TEXT = {
   },
 };
 
+// The language, from the browser's, changed by the language buttons; `t` reads a text in
+// it; `$` finds an element by id.
 let lang = (navigator.language || "en").startsWith("fr") ? "fr" : "en";
 const t = (k) => TEXT[lang][k];
 const $ = (id) => document.getElementById(id);
@@ -95,6 +117,7 @@ const audio = { ctx: null, node: null, json: null, starting: false };
 // Control values by key, and their ranges from the JSON.
 const values = new Map();
 const ranges = new Map();
+// The octave of the computer keyboard's lower row: its C is MIDI key 12 * (octave + 1).
 let octave = 4;
 // A key sounds while one source at least holds it: a pointer, a computer key
 // and a MIDI input can hold the same key; the note is released with the last.
@@ -105,6 +128,10 @@ const FIRST_KEY = 24;
 const LAST_KEY = 108;
 const keyElements = new Map();
 
+/**
+ * Posts a message to the AudioWorklet, if audio has started.
+ * @param {Object} message - one of the messages listed in elements-processor.js
+ */
 function send(message) {
   if (audio.node) audio.node.port.postMessage(message);
 }
@@ -134,6 +161,7 @@ const timbreStatus = document.createElement("p");
 timbreStatus.className = "help timbre-status";
 // The current sound measured by measure-worker.js after every change: one
 // measure at a time, the latest values when it is done.
+// `measuring` while a measure is in flight, `measureAgain` when a change came meanwhile.
 let worker = null;
 let measureTimer = 0;
 let measuring = false;
@@ -143,6 +171,9 @@ let soundD = null; // its descriptors
 let targetMark = null; // the sound the timbre orbit asks for
 let timbreTarget = null; // its percentiles
 // Who changed the sound last: "timbre" while the timbre orbit drives it.
+// `applyingTimbre` while the timbre orbit's patch is being set, so that setControl does
+// not end its request; `searchId` numbers the searches (an answer to an older one is
+// ignored), `searchTimer` waits for the dots to rest.
 let changeSource = "other";
 let applyingTimbre = false;
 let searchId = 0;
@@ -150,6 +181,16 @@ let searchTimer = 0;
 // True while a preset sets every control, so that the orbit is updated once.
 let batching = false;
 
+/**
+ * Sets a control everywhere: the values, the orbit (unless the change comes from it, or a
+ * batch sets the orbit once at its end), the worklet, and the slider's row. A change from
+ * outside the timbre orbit ends its request, and the current sound is measured again
+ * (once at the end of a batch).
+ * @param {string} key - the control's key ("exciter/bow")
+ * @param {number} value - its value, in the control's own units
+ * @param {boolean} [fromOrbit] - the orbit moved it: the orbit is not told again, and an
+ *   unchanged value is dropped
+ */
 function setControl(key, value, fromOrbit = false) {
   const r = ranges.get(key);
   // A stepped control (the model) takes whole values; the orbit interpolates.
@@ -169,11 +210,23 @@ function setControl(key, value, fromOrbit = false) {
   }
 }
 
+/**
+ * A control's value as its row shows it: whole for a stepped control, else three
+ * decimals.
+ * @param {string} key - the control's key
+ * @param {number} v - its value
+ * @returns {string}
+ */
 function format(key, v) {
   const r = ranges.get(key);
   return r && r.step >= 1 ? String(Math.round(v)) : Number(v).toFixed(3);
 }
 
+/**
+ * Fetches a DSP compiled by `make web` (its JSON and its wasm) and compiles the module.
+ * @param {string} name - "voice" or "body"
+ * @returns {Promise<{json: Object, module: WebAssembly.Module}>}
+ */
 async function loadDsp(name) {
   const [json, module] = await Promise.all([
     fetch(DSP_DIR + name + ".json").then((r) => r.json()),
@@ -182,6 +235,15 @@ async function loadDsp(name) {
   return { json, module };
 }
 
+/**
+ * The Start button. Once audio has started it suspends or resumes the context. The first
+ * time it creates the context at 32 kHz (the browser resamples to the device), loads the
+ * worklet, the DSPs and the atlas, starts the worker, makes the worklet's node, builds
+ * the controls and applies the selected preset, which sends every control to the worklet.
+ * On failure the error is shown and the context closed: `audio.ctx` stays null, so
+ * another click tries again.
+ * @returns {Promise<void>}
+ */
 async function start() {
   if (audio.ctx) {
     if (audio.ctx.state === "running") {
@@ -222,6 +284,8 @@ async function start() {
       }
     }
     audio.json = { voice: voice.json, body: body.json };
+    // No input, one stereo output; the compiled modules cross into the worklet by
+    // structured clone, so it instantiates them without compiling them again.
     const node = new AudioWorkletNode(ctx, "elements", {
       numberOfInputs: 0,
       numberOfOutputs: 1,
@@ -247,11 +311,21 @@ async function start() {
   }
 }
 
+/**
+ * The line under the page that says which compiler built the DSPs and how.
+ * @returns {string} "faust-rs <version>, <compile options>", from the voice's JSON
+ */
 function buildLine() {
   const j = audio.json.voice;
   return `faust-rs ${j.version || ""}, ${j.compile_options || ""}`;
 }
 
+/**
+ * A message from the worklet: the "stats" fill the load, voices and level meters ("ready"
+ * needs nothing). The load bar stops at 100 %, its figure does not; the level meter spans
+ * -60 to 0 dBFS of the peak amplitude.
+ * @param {Object} m - the message
+ */
 function onMessage(m) {
   if (m.type === "stats") {
     const load = Math.min(1, m.load);
@@ -271,6 +345,10 @@ const NOTE_CONTROLS = new Set(["freq", "gain", "gate"]);
 
 // The ranges and defaults of every control of the patch, from the voice's and
 // the body's JSON.
+/**
+ * Reads every control's {min, max, step, init} into `ranges`, and gives a control that
+ * has no value yet its default.
+ */
 function readRanges() {
   for (const j of [audio.json.voice, audio.json.body]) {
     for (const item of uiItems(j.ui)) {
@@ -295,6 +373,12 @@ let currentTab = (() => {
 
 // One tab per group of controls (exciter, resonator, space...), as on the
 // module's panel; one panel per tab, the others hidden.
+/**
+ * Builds the tab bar and its panels: one per group of controls that the DSPs have, then
+ * the Orbit, Atlas and Phone tabs, and shows the tab last shown. Called at the start of
+ * audio and when the language changes; the orbit's, the atlas's and the map's hosts are
+ * kept across rebuilds, the atlas and the timbre orbit made again in the new language.
+ */
 function buildControls() {
   const root = $("controls");
   root.innerHTML = "";
@@ -357,6 +441,9 @@ function buildControls() {
         polyphony: () => Number($("polyphony").value),
       });
     }
+    // A row per control: its name, a slider (whole steps for a stepped control, else
+    // 0.001), its value and its explanation. Moving the slider sets the control and marks
+    // the preset modified; a double click resets the control to its default.
     for (const c of CONTROLS.filter((x) => x.group === g.id && ranges.has(x.key))) {
       const r = ranges.get(c.key);
       const row = document.createElement("div");
@@ -393,6 +480,12 @@ function buildControls() {
   showTab(currentTab);
 }
 
+/**
+ * Shows a tab and hides the other panels; the tab list follows the ARIA pattern (one tab
+ * selected and focusable). The orbit, the atlas and the map are built or laid out again
+ * when their tab is shown, since they lay themselves out from their size.
+ * @param {string} id - the tab's id (a group's, "orbit", "atlas" or "phone")
+ */
 function showTab(id) {
   currentTab = id;
   try {
@@ -418,14 +511,25 @@ function showTab(id) {
   if (id === "atlas" && audio.json) showMap(atlasHost, false);
 }
 
-// A main element and, beside it on a wide page (below it otherwise), a column
-// with a title, a help line and more elements.
-// The main view and a column beside it, with a separator between them that
-// shares the width (on wide screens only, where they stand side by side). The
-// share, the left side's fraction, is remembered by the browser per layout.
+// The shares of the side-by-side layouts (sideBySide, below): the left side's fraction of
+// the width, remembered by the browser per layout under SPLIT_STORE + its class name.
 const SPLIT_STORE = "faust-elements-split-";
 const SPLIT_MIN = 220; // px, the narrowest side
 
+/**
+ * A main element and, beside it on a wide page (below it otherwise), a column with a
+ * title, a help line and more elements, with a separator between them that shares the
+ * width (on wide screens only, where they stand side by side). The share is set through
+ * the CSS custom properties --split-left and --split-right, as grid fractions; the
+ * separator is dragged, moved by the arrow keys (2 % a press), and double-clicked for the
+ * default.
+ * @param {HTMLElement} main - the main element, on the left
+ * @param {string} className - the layout's class, also its key in the storage
+ * @param {string} title - the column's title
+ * @param {string} help - the column's help line
+ * @param {...HTMLElement} side - the column's other elements
+ * @returns {HTMLElement} the layout
+ */
 function sideBySide(main, className, title, help, ...side) {
   const layout = document.createElement("div");
   layout.className = `side-by-side ${className}`;
@@ -462,11 +566,14 @@ function sideBySide(main, className, title, help, ...side) {
     layout.style.setProperty("--split-right", `${1 - f}fr`);
     split.setAttribute("aria-valuenow", String(Math.round(100 * f)));
   };
+  // A share that leaves each side at least SPLIT_MIN px, or the half when the layout is
+  // narrower than two of them.
   const clampShare = (f) => {
     const width = layout.clientWidth - split.offsetWidth;
     const min = width > 2 * SPLIT_MIN ? SPLIT_MIN / width : 0.5;
     return Math.min(Math.max(f, min), 1 - min);
   };
+  // Stores a share, or forgets it (null), when the browser allows it.
   const remember = (f) => {
     try {
       if (f == null) localStorage.removeItem(key);
@@ -481,6 +588,8 @@ function sideBySide(main, className, title, help, ...side) {
   } catch {
     // Storage refused: the default share.
   }
+  // The share as laid out; a drag moves the separator's middle to the pointer, and the
+  // share is stored when the drag ends.
   const current = () => left.offsetWidth / (left.offsetWidth + right.offsetWidth);
   let dragging = false;
   split.addEventListener("pointerdown", (e) => {
@@ -496,6 +605,7 @@ function sideBySide(main, className, title, help, ...side) {
     const width = rect.width - split.offsetWidth;
     share(clampShare((e.clientX - rect.left - split.offsetWidth / 2) / width));
   });
+  // The end of a drag: the share as laid out is stored.
   const stop = () => {
     if (!dragging) return;
     dragging = false;
@@ -519,10 +629,16 @@ function sideBySide(main, className, title, help, ...side) {
   return layout;
 }
 
+// A preset's name in the page's language, by id (the id itself if unknown).
 const presetName = (id) => PRESETS.find((p) => p.id === id)?.[lang][0] ?? id;
 
-// The atlas in its tab (with the timbre orbit), or the small map beside the
-// orbit, built the first time it is shown.
+/**
+ * The atlas in its tab (with the timbre orbit), or the small map beside the orbit, built
+ * the first time it is shown, laid out again afterwards; without web/atlas.json, a line
+ * that says how to make it.
+ * @param {HTMLElement} host - atlasHost or miniHost
+ * @param {boolean} compact - the small map
+ */
 function showMap(host, compact) {
   if (!atlasData) {
     host.innerHTML = "";
@@ -564,7 +680,9 @@ function showMap(host, compact) {
   });
 }
 
-// The current sound measured after a change, 120 ms after the last one.
+// The current sound measured after a change, 120 ms after the last one. One measure is in
+// flight at a time: a change while it runs asks for another one when it is answered, with
+// the values of that time.
 function scheduleMeasure() {
   if (!worker || !atlasData) return;
   clearTimeout(measureTimer);
@@ -578,13 +696,28 @@ function scheduleMeasure() {
   }, 120);
 }
 
-// A sound on the atlas: its descriptors in the atlas's order, its coordinates.
+/**
+ * A sound on the atlas: its descriptors in the atlas's order, its coordinates, as
+ * atlas.js's setSound and setTarget take it.
+ * @param {Object<string, number>} d - descriptors by name
+ * @param {boolean} [censored] - its decay was extrapolated
+ * @returns {{d: number[], pc: number[], c: boolean}}
+ */
 function markOf(d, censored = false) {
   return { d: atlasData.axes.map((a) => d[a]), pc: project(atlasData, d), c: censored };
 }
 
+// A sound's percentiles among the atlas's sounds, by descriptor, rounded to the timbre
+// orbit's step (0.01).
 const ranksOf = (d) => Object.fromEntries(atlasData.axes.map((a) => [a, Number(percentile(atlasTable.table[a], d[a]).toFixed(2))]));
 
+/**
+ * A message from the worker. "measured": the current sound's place on both maps, then
+ * either the gap to what the timbre orbit asked for, when it drives the sound, or the
+ * timbre orbit's dots moved to the sound. "found": the search's patch, applied only if it
+ * answers the latest search and the timbre orbit still drives the sound.
+ * @param {Object} m - the message (see measure-worker.js)
+ */
 function onWorker(m) {
   if (m.type === "measured") {
     measuring = false;
@@ -611,8 +744,14 @@ function onWorker(m) {
   }
 }
 
-// The timbre orbit asks for a sound: the nearest sounds of the atlas blended at
-// once, then a search by measures once the dots rest.
+/**
+ * The timbre orbit asks for a sound: the nearest sound of the atlas at once
+ * (nearestSound, of the current model when it is almost as near), then a search by
+ * measures once the dots rest (350 ms), from the current values over the continuous
+ * controls (the model stays), 40 renders in the worker. The target is marked on the atlas
+ * as the descriptors at those percentiles (quantile), projected.
+ * @param {Object<string, number>} target - the percentiles asked for, by descriptor
+ */
 function askTimbre(target) {
   if (!atlasData) return;
   timbreTarget = target;
@@ -638,7 +777,11 @@ function askTimbre(target) {
   }, 350);
 }
 
-// The atlas's controls of a patch, set as the timbre orbit's.
+/**
+ * The atlas's controls of a patch, set as the timbre orbit's: as one batch (the orbit
+ * moved once, one measure), without ending the timbre orbit's request.
+ * @param {Object<string, number>} patch - control values by key
+ */
 function applyTimbrePatch(patch) {
   changeSource = "timbre";
   applyingTimbre = true;
@@ -651,7 +794,8 @@ function applyTimbrePatch(patch) {
   scheduleMeasure();
 }
 
-// A change from elsewhere ends the timbre orbit's request.
+// A change from elsewhere ends the timbre orbit's request: the target's ring and the gap
+// go, and a search still running is answered in vain (searchId moves on).
 function leaveTimbre() {
   if (changeSource === "timbre") {
     timbreTarget = null;
@@ -665,9 +809,16 @@ function leaveTimbre() {
   changeSource = "other";
 }
 
-// A sound of the atlas: its patch over the defaults, as a preset is, then the
-// note it was measured with.
+// The timer that releases the note of the sound last loaded from the atlas.
 let auditionTimer = 0;
+/**
+ * A sound of the atlas: its patch over the defaults, as a preset is, then the note it was
+ * measured with. The preset menu shows the preset if the sound is one, else marks the
+ * last one modified. The note is played by the source "atlas" for the atlas's hold (1 s);
+ * a second click restarts it.
+ * @param {number} index - the point's index in atlas.json's points
+ * @param {boolean} play - also play the note
+ */
 function loadAtlasSound(index, play) {
   atlasCurrent = index;
   const p = atlasData.points[index];
@@ -693,6 +844,11 @@ function loadAtlasSound(index, play) {
   auditionTimer = setTimeout(() => noteOff(key, "atlas"), 1000 * hold);
 }
 
+/**
+ * The orbit of the controls (orbit.js), with the page's presets and values; a dot moved
+ * sets its control as coming from the orbit, then the preset menu follows.
+ * @returns {Object} the orbit's handle: setValues, resize, presetOf
+ */
 function makeOrbit() {
   return createOrbit(orbitHost, {
     voiceJson: audio.json.voice,
@@ -708,6 +864,7 @@ function makeOrbit() {
   });
 }
 
+/** The preset menu, in the page's language, and the selected preset's description. */
 function buildPresets() {
   const sel = $("preset");
   sel.innerHTML = "";
@@ -720,11 +877,17 @@ function buildPresets() {
   showPresetHelp();
 }
 
+/** The selected preset's description under the menu. */
 function showPresetHelp() {
   const p = PRESETS.find((x) => x.id === $("preset").value) || PRESETS[0];
   $("preset-help").textContent = p[lang][1];
 }
 
+/**
+ * Loads a preset: every control at its value, else at its default, as one batch; the
+ * timbre orbit's request ends, the orbit follows, and the sound is measured.
+ * @param {string} id - the preset's id
+ */
 function applyPreset(id) {
   const p = PRESETS.find((x) => x.id === id);
   if (!p) return;
@@ -737,10 +900,14 @@ function applyPreset(id) {
   showPresetHelp();
 }
 
-// After the orbit moved controls (a preset recalled from its library, a morph,
-// a drag), the menu shows the preset the sound now is exactly, else the last
-// one marked modified. Checked once the orbit's burst of changes is over.
+// The timer of followOrbit, restarted by every change of the orbit.
 let followTimer = 0;
+/**
+ * After the orbit moved controls (a preset recalled from its library, a morph,
+ * a drag), the menu shows the preset the sound now is exactly, else the last
+ * one marked modified. Checked once the orbit's burst of changes is over (30 ms
+ * after the last change).
+ */
 function followOrbit() {
   clearTimeout(followTimer);
   followTimer = setTimeout(() => {
@@ -754,6 +921,7 @@ function followOrbit() {
   }, 30);
 }
 
+/** Marks the selected preset modified: its description followed by " *". */
 function markPresetModified() {
   $("preset-help").textContent = PRESETS.find((x) => x.id === $("preset").value)[lang][1] + " *";
 }
@@ -765,8 +933,15 @@ function markPresetModified() {
 // space bar, a MIDI sustain pedal.
 const pedal = { latch: false, space: false, midi: false };
 const sustained = new Set();
+// Whether the hold is down: any of its sources is.
 const pedalDown = () => pedal.latch || pedal.space || pedal.midi;
 
+/**
+ * One source of the hold goes down or up; lifting the last one releases every sustained
+ * key.
+ * @param {"latch"|"space"|"midi"} source - the switch on the page, the space bar, CC64
+ * @param {boolean} down
+ */
 function setPedal(source, down) {
   pedal[source] = down;
   if (source === "latch") $("sustain").checked = down;
@@ -776,6 +951,10 @@ function setPedal(source, down) {
   }
 }
 
+/**
+ * A key's look: "down" while a source holds it, "sustained" while only the hold keeps it.
+ * @param {number} key - MIDI key
+ */
 function showKey(key) {
   const el = keyElements.get(key);
   if (!el) return;
@@ -787,9 +966,11 @@ function showKey(key) {
  * A key pressed by a source; a key already sounding is struck again.
  * @param {number} key - MIDI key
  * @param {number} velocity - in [0, 1]
- * @param {string} source - who holds it: "p<pointer id>", "kbd", "midi"
+ * @param {string} source - who holds it: "p<pointer id>", "kbd:<key code>", "midi",
+ *   "atlas"
  */
 function noteOn(key, velocity, source) {
+  // A context the browser has suspended resumes on the first note.
   if (audio.ctx && audio.ctx.state !== "running") audio.ctx.resume().catch(() => {});
   let s = sources.get(key);
   if (!s) sources.set(key, (s = new Set()));
@@ -816,17 +997,24 @@ function noteOff(key, source) {
   }
 }
 
-// Sends the release of a key no longer held nor sustained.
+/**
+ * Sends the release of a key no longer held nor sustained.
+ * @param {number} key - MIDI key
+ */
 function release(key) {
   sustained.delete(key);
   send({ type: "noteOff", key });
   showKey(key);
 }
 
+// The pitch classes of the black keys, and the names of the twelve.
 const BLACK = [1, 3, 6, 8, 10];
 const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 
-// The keys C1 to C8, each C labelled, built once.
+/**
+ * The keys C1 to C8, each C labelled, built once: a div per key with its MIDI key in
+ * `data-key`, the black ones laid over the white ones by the style sheet.
+ */
 function buildKeyboard() {
   const kb = $("keyboard");
   kb.innerHTML = "";
@@ -848,8 +1036,11 @@ function buildKeyboard() {
   showOctave();
 }
 
-// The keys the computer keyboard plays (two rows from the octave), marked, and
-// the view scrolled to them.
+/**
+ * The keys the computer keyboard plays (two rows from the octave), marked, and the view
+ * scrolled to them: 25 keys from the octave's C, the box scrolled so that this C stands
+ * 24 CSS px from its left edge.
+ */
 function showOctave() {
   const first = 12 * (octave + 1);
   for (const [k, el] of keyElements) el.classList.toggle("kbd", k >= first && k <= first + 24);
@@ -859,18 +1050,34 @@ function showOctave() {
   if (el && box) box.scrollLeft = Math.max(0, el.offsetLeft - 24);
 }
 
+/**
+ * @param {number} o - the computer keyboard's octave, clamped to 0..7
+ */
 function setOctave(o) {
   octave = Math.max(0, Math.min(7, o));
   showOctave();
 }
 
-// The key under a point of the window, or null.
+/**
+ * The key under a point of the window, or null. A captured pointer's events all go to the
+ * keyboard, so the key is found from the point, which also lets a finger slide from key
+ * to key.
+ * @param {number} x - clientX
+ * @param {number} y - clientY
+ * @returns {?{el: HTMLElement, key: number}} the key's element and MIDI key
+ */
 function keyAt(x, y) {
   const el = document.elementFromPoint(x, y)?.closest(".key");
   return el && el.dataset.key ? { el, key: Number(el.dataset.key) } : null;
 }
 
-// Lower on a key is louder.
+/**
+ * Lower on a key is louder: the velocity grows linearly from 0.2 at the top of the key to
+ * 1 at its bottom.
+ * @param {PointerEvent} e - the pointer
+ * @param {HTMLElement} el - the key
+ * @returns {number} the velocity, in [0.2, 1]
+ */
 function velocityAt(e, el) {
   const rect = el.getBoundingClientRect();
   const y = Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height));
@@ -892,6 +1099,8 @@ function initPointer() {
     pointers.set(e.pointerId, hit.key);
     noteOn(hit.key, velocityAt(e, hit.el), "p" + e.pointerId);
   });
+  // A captured pointer that moves onto another key releases its key and strikes the new
+  // one, at the velocity of the new point.
   kb.addEventListener("pointermove", (e) => {
     if (!pointers.has(e.pointerId)) return;
     const hit = keyAt(e.clientX, e.clientY);
@@ -901,6 +1110,7 @@ function initPointer() {
     pointers.set(e.pointerId, hit.key);
     noteOn(hit.key, velocityAt(e, hit.el), "p" + e.pointerId);
   });
+  // A pointer lifted or lost releases the key it holds.
   const up = (e) => {
     if (!pointers.has(e.pointerId)) return;
     noteOff(pointers.get(e.pointerId), "p" + e.pointerId);
@@ -910,11 +1120,20 @@ function initPointer() {
   kb.addEventListener("pointercancel", up);
 }
 
-// Two rows of the computer keyboard, by physical key, whatever the layout.
+// Two rows of the computer keyboard, by physical key (KeyboardEvent.code), whatever the
+// layout: each a chromatic octave plus one from C, the lower row from the octave's C
+// (Z S X D C V G B H N J M and the comma), the upper row an octave higher
+// (Q 2 W 3 E R 5 T 6 Y 7 U I).
+// `pressed` keeps, for every physical key down, the note it started, so that its release
+// ends that note even if the octave changed meanwhile.
 const ROW_LOW = ["KeyZ", "KeyS", "KeyX", "KeyD", "KeyC", "KeyV", "KeyG", "KeyB", "KeyH", "KeyN", "KeyJ", "KeyM", "Comma"];
 const ROW_HIGH = ["KeyQ", "Digit2", "KeyW", "Digit3", "KeyE", "KeyR", "Digit5", "KeyT", "Digit6", "KeyY", "Digit7", "KeyU", "KeyI"];
 const pressed = new Map();
 
+/**
+ * @param {string} code - a KeyboardEvent.code
+ * @returns {number} the MIDI key it plays at the current octave, -1 for none
+ */
 function keyToNote(code) {
   let i = ROW_LOW.indexOf(code);
   if (i >= 0) return 12 * (octave + 1) + i;
@@ -923,6 +1142,14 @@ function keyToNote(code) {
   return -1;
 }
 
+/**
+ * A key pressed: ignored in inputs (sliders, switches) and menus, in the orbits (they have
+ * their own keys), on the tabs (the arrows move between them), and when repeated. The
+ * arrows change the octave, the space bar is a source of the hold, the two rows play
+ * notes at the page's velocity (its slider's value over 127), each physical key a source
+ * of its own.
+ * @param {KeyboardEvent} e
+ */
 function onKeyDown(e) {
   if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT" || e.repeat) return;
   // The orbit has its own keys (R, L, arrows, space).
@@ -944,6 +1171,10 @@ function onKeyDown(e) {
   }
 }
 
+/**
+ * A key released: the space bar lifts its hold, a playing key releases its note.
+ * @param {KeyboardEvent} e
+ */
 function onKeyUp(e) {
   if (e.code === "Space") {
     setPedal("space", false);
@@ -966,6 +1197,8 @@ async function setupMidi() {
   }
   try {
     const access = await navigator.requestMIDIAccess();
+    // The input menu, rebuilt whenever a device comes or goes, keeping its selection;
+    // every input gets a handler that plays only if it is the one selected, or all are.
     const refresh = () => {
       const current = sel.value;
       sel.innerHTML = `<option value="all">${t("allInputs")}</option>`;
@@ -990,6 +1223,12 @@ async function setupMidi() {
   }
 }
 
+/**
+ * A MIDI message, on any channel: note on (velocity 0 counts as a note off), note off,
+ * pitch bend (14 bits centred on 8192, mapped to -2..2 semitones on the pitch offset),
+ * sustain pedal (CC64, down from 64), all sound off (CC120) and all notes off (CC123).
+ * @param {Uint8Array} data - the status byte and its two data bytes
+ */
 function midi([status, a, b]) {
   const type = status & 0xf0;
   if (type === 0x90 && b > 0) noteOn(a, b / 127, "midi");
@@ -999,6 +1238,10 @@ function midi([status, a, b]) {
   else if (type === 0xb0 && (a === 120 || a === 123)) panic();
 }
 
+/**
+ * All notes off: no source holds a key any more, the hold's keys are forgotten, and the
+ * worklet silences every voice.
+ */
 function panic() {
   sources.clear();
   sustained.clear();
@@ -1006,6 +1249,10 @@ function panic() {
   send({ type: "panic" });
 }
 
+/**
+ * Writes the page in `lang`: the texts of index.html, the Start button, the preset menu,
+ * and the controls' tabs (rebuilt, once the DSPs are loaded).
+ */
 function applyLanguage() {
   document.documentElement.lang = lang;
   for (const el of document.querySelectorAll("[data-text]")) el.textContent = t(el.dataset.text);
@@ -1015,6 +1262,11 @@ function applyLanguage() {
   for (const b of document.querySelectorAll("[data-lang]")) b.classList.toggle("on", b.dataset.lang === lang);
 }
 
+/**
+ * Wires the page's buttons, menus and keys, writes the page in its language, and builds
+ * the keyboard and the pointer and MIDI inputs. Audio waits for the Start button: a
+ * browser starts an AudioContext only after a gesture.
+ */
 function init() {
   for (const b of document.querySelectorAll("[data-lang]")) {
     b.addEventListener("click", () => {
