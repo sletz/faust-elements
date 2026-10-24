@@ -80,6 +80,9 @@ class Tunnel:
         self.lock = threading.Lock()
 
     def start(self):
+        """Starts ngrok if it is not running with an address yet, and waits up
+        to 10 s for its public HTTPS address (its local API, port 4040). Sets
+        url, or error with the reason."""
         with self.lock:
             if self.process and self.process.poll() is None and self.url:
                 return
@@ -110,10 +113,12 @@ class Tunnel:
             self.error = "ngrok gave no public address"
 
     def stop(self):
+        """Stops ngrok, if running."""
         with self.lock:
             self._stop()
 
     def _stop(self):
+        """Stops ngrok (terminated, killed after 3 s), the lock held."""
         if self.process and self.process.poll() is None:
             self.process.terminate()
             try:
@@ -133,10 +138,12 @@ class PageHandler(http.server.SimpleHTTPRequestHandler):
     extensions_map = {**http.server.SimpleHTTPRequestHandler.extensions_map, **TYPES}
 
     def end_headers(self):
+        """Every reply uncached: a reloaded page gets the files of the last build."""
         self.send_header("Cache-Control", "no-store")
         super().end_headers()
 
     def reply(self, status, body):
+        """Sends a JSON reply with its status."""
         data = json.dumps(body).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
@@ -145,11 +152,15 @@ class PageHandler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(data)
 
     def do_GET(self):
+        """The repository's files, and /pwa/info."""
         if self.path == "/pwa/info":
             return self.reply(200, info())
         return super().do_GET()
 
     def do_POST(self):
+        """/pwa/apps and /pwa/tunnel, from the page only (this server listens on
+        127.0.0.1; a request a site makes from another origin is refused), with
+        a bounded JSON body."""
         # The page's own requests only: from this machine, same origin.
         origin = self.headers.get("Origin")
         if origin and not re.match(r"^http://(localhost|127\.0\.0\.1)(:\d+)?$", origin):
@@ -172,6 +183,10 @@ class PageHandler(http.server.SimpleHTTPRequestHandler):
         return self.reply(404, {"error": "unknown request"})
 
     def store(self, body):
+        """Stores an app the page built: its id of the page's form, its files'
+        paths without '..' nor leading dot, their contents base64, and a
+        directory that does not exist yet (an app is never overwritten). Replies
+        201 with the addresses."""
         app_id = str(body.get("id", ""))
         files = body.get("files")
         if not APP_ID.match(app_id) or not isinstance(files, dict) or not files:
@@ -199,22 +214,26 @@ class AppsHandler(http.server.SimpleHTTPRequestHandler):
     extensions_map = {**http.server.SimpleHTTPRequestHandler.extensions_map, **TYPES}
 
     def end_headers(self):
+        """Every reply revalidated."""
         # Revalidated: an installed app updates through its service worker.
         self.send_header("Cache-Control", "no-cache")
         super().end_headers()
 
     def list_directory(self, path):
+        """No listing: the apps' ids are not to be discovered."""
         self.send_error(404)
         return None
 
     def log_message(self, format, *args):
-        pass
+        """Silent: the page's server already prints its own log."""
 
 
 class CaHandler(http.server.BaseHTTPRequestHandler):
     """The local authority's certificate, and how to trust it."""
 
     def do_GET(self):
+        """/ca.crt (the certificate, to download) and / (how to trust it, in
+        French and English); anything else is 404."""
         path = os.path.join(CERT, "ca.crt")
         if self.path == "/ca.crt" and os.path.exists(path):
             with open(path, "rb") as f:
@@ -255,10 +274,11 @@ class CaHandler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def log_message(self, format, *args):
-        pass
+        """Silent."""
 
 
 def cert_ip():
+    """The address the current certificate was made for (make pwa-cert), or None."""
     try:
         with open(os.path.join(CERT, "ip.txt")) as f:
             return f.read().strip()
@@ -266,10 +286,14 @@ def cert_ip():
         return None
 
 
+# Whether the local network's HTTPS server runs (it needs make pwa-cert).
 SERVING = {"lan": False}
 
 
 def info():
+    """The addresses a phone can install the apps from: on the local network
+    (this machine's address now, whether its server runs and its certificate is
+    for that address), and the tunnel's public address or its error."""
     ip = lan_ip()
     certified = cert_ip()
     return {
@@ -286,10 +310,14 @@ def info():
 
 
 def serve(server, name):
+    """Runs a server in a daemon thread (stopped with the page's server)."""
     threading.Thread(target=server.serve_forever, name=name, daemon=True).start()
 
 
 def main():
+    """Starts the apps' servers (the tunnel's always; the local network's HTTPS
+    and the authority's when make pwa-cert has run), then the page's server,
+    until Ctrl-C, which also stops the tunnel."""
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
     os.makedirs(APPS, exist_ok=True)
     apps = functools.partial(AppsHandler, directory=APPS)

@@ -1,0 +1,48 @@
+<!doctype html>
+<!-- The static phone app (web/phone/phone.js), for GitHub Pages or any static
+     host: its configuration comes in the address (?c=..., written by the
+     page's Phone tab, web/phone-config.js), its files are the page's own, one
+     directory up (the app-base meta). Several configurations can be installed
+     side by side: the service worker gives each its own manifest. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="app-base" content="../">
+<title>Elements</title>
+<link rel="manifest" id="manifest" href="manifest.webmanifest">
+<script>
+  // The manifest of this configuration: the service worker answers
+  // manifest.webmanifest?c=... with the app's own name and identity.
+  document.getElementById("manifest").href = "manifest.webmanifest" + location.search;
+</script>
+<meta name="theme-color" content="#1b1b1d">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Elements">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-192.png">
+<link rel="stylesheet" href="../phone/phone.css">
+</head>
+<body>
+<header>
+  <h1 id="name">Elements</h1>
+  <span id="status"></span>
+</header>
+<main>
+  <section id="motion"></section>
+  <button type="button" id="onoff" aria-pressed="false" hidden>ON</button>
+  <section class="bar">
+    <button type="button" id="octave-down">−</button>
+    <span id="octave"></span>
+    <button type="button" id="octave-up">+</button>
+    <button type="button" id="hold" aria-pressed="false"></button>
+    <button type="button" id="follow" aria-pressed="true"></button>
+  </section>
+  <div id="keyboard"></div>
+</main>
+<div id="start" role="button" tabindex="0"><span id="start-text"></span></div>
+<script type="module" src="../phone/phone.js"></script>
+</body>
+</html>

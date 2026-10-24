@@ -2,8 +2,6 @@ build/
 __pycache__/
 *.wav
 .DS_Store
-web/dsp/
-web/atlas.json
 paper/main.aux
 paper/main.bbl
 paper/main.blg

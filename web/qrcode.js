@@ -1,6 +1,7 @@
 // QR codes (ISO/IEC 18004) for the links the page shows: byte mode, error
-// correction level M (15 % of the codewords can be lost), versions 1 to 10,
-// that is up to 213 bytes of UTF-8, the mask chosen by the standard's penalty.
+// correction level M (15 % of the codewords can be lost), versions 1 to 20,
+// that is up to 666 bytes of UTF-8 (a static app's address carries its
+// configuration), the mask chosen by the standard's penalty.
 // Written for this page after the structure of Project Nayuki's QR Code
 // generator (MIT); checked by decoding with the system's reader
 // (scripts/check_qrcode.mjs).
@@ -11,12 +12,20 @@ const BLOCKS_M = [
   null,
   [10, 1, 16, 0, 0], [16, 1, 28, 0, 0], [26, 1, 44, 0, 0], [18, 2, 32, 0, 0], [24, 2, 43, 0, 0],
   [16, 4, 27, 0, 0], [18, 4, 31, 0, 0], [22, 2, 38, 2, 39], [22, 3, 36, 2, 37], [26, 4, 43, 1, 44],
+  [30, 1, 50, 4, 51], [22, 6, 36, 2, 37], [22, 8, 37, 1, 38], [24, 4, 40, 5, 41], [24, 5, 41, 5, 42],
+  [28, 7, 45, 3, 46], [28, 10, 46, 1, 47], [26, 9, 43, 4, 44], [26, 3, 44, 11, 45], [26, 3, 41, 13, 42],
 ];
-const MAX_VERSION = 10;
+const MAX_VERSION = 20;
 // The format bits of level M (L 01, M 00, Q 11, H 10).
 const FORMAT_M = 0;
 
-// Data modules of a version (all but the function patterns), in bits.
+/**
+ * The modules of a version left for data once the function patterns are drawn
+ * (finders, separators, timing, alignment patterns, format and version bits),
+ * that is its capacity in bits, codewords and remainder bits included.
+ * @param {number} v - version, 1 .. 40
+ * @returns {number}
+ */
 function rawModules(v) {
   let n = (16 * v + 128) * v + 64;
   if (v >= 2) {
@@ -27,7 +36,8 @@ function rawModules(v) {
   return n;
 }
 
-// The table agrees with the geometry, version by version.
+// The table agrees with the geometry, version by version: the codewords of its
+// blocks fill the symbol's data modules (a wrong row fails here, at load).
 for (let v = 1; v <= MAX_VERSION; v += 1) {
   const [ec, b1, d1, b2, d2] = BLOCKS_M[v];
   if (b1 * (d1 + ec) + b2 * (d2 + ec) !== Math.floor(rawModules(v) / 8)) {
@@ -35,7 +45,13 @@ for (let v = 1; v <= MAX_VERSION; v += 1) {
   }
 }
 
-// The centres of the alignment patterns.
+/**
+ * The row and column coordinates of the alignment patterns' centres: 6, then
+ * evenly spaced (even steps) up to size - 7; the patterns are drawn at every
+ * pair of them but the three over the finders.
+ * @param {number} v - version
+ * @returns {number[]}
+ */
 function alignment(v) {
   if (v === 1) return [];
   const count = Math.floor(v / 7) + 2;
@@ -45,7 +61,13 @@ function alignment(v) {
   return out;
 }
 
-// GF(256) with the polynomial 0x11d.
+/**
+ * The product in GF(256) with the field polynomial x^8 + x^4 + x^3 + x^2 + 1
+ * (0x11d), by shift and add (Russian peasant).
+ * @param {number} x - a byte
+ * @param {number} y - a byte
+ * @returns {number} a byte
+ */
 function mul(x, y) {
   let z = 0;
   for (let i = 7; i >= 0; i -= 1) {
@@ -55,6 +77,13 @@ function mul(x, y) {
   return z & 0xff;
 }
 
+/**
+ * The Reed-Solomon generator polynomial of a degree, the product of (x - 2^i)
+ * for i < degree, its coefficients from the highest power down, the leading 1
+ * left out.
+ * @param {number} degree - the error correction codewords per block
+ * @returns {number[]}
+ */
 function divisor(degree) {
   const d = new Array(degree).fill(0);
   d[degree - 1] = 1;
@@ -69,6 +98,13 @@ function divisor(degree) {
   return d;
 }
 
+/**
+ * The error correction codewords of a block: the remainder of the data
+ * polynomial (times x^degree) by the generator, by long division.
+ * @param {number[]} data - the block's data codewords
+ * @param {number[]} div - from divisor
+ * @returns {number[]} div.length codewords
+ */
 function remainder(data, div) {
   const r = new Array(div.length).fill(0);
   for (const b of data) {
@@ -79,10 +115,20 @@ function remainder(data, div) {
   return r;
 }
 
+/** @returns {boolean} bit i of x */
 const bit = (x, i) => ((x >>> i) & 1) !== 0;
 
-// The codewords of a version: the data, padded, split into blocks, each with
-// its error correction, interleaved.
+/**
+ * The codewords of a symbol: the byte-mode segment (mode 0100, the count on 8
+ * bits up to version 9, 16 from 10, the bytes), a terminator of up to four zero
+ * bits, zeros to a byte boundary, the pad bytes 0xec 0x11 alternating up to the
+ * capacity; then the data split into the version's blocks, each followed by
+ * its error correction, and interleaved: the blocks' first data codewords,
+ * their second..., then their error correction codewords likewise.
+ * @param {number[]} bytes - the text's UTF-8
+ * @param {number} v - version, large enough
+ * @returns {number[]}
+ */
 function codewords(bytes, v) {
   const [ec, b1, d1, b2, d2] = BLOCKS_M[v];
   const capacity = b1 * d1 + b2 * d2;
@@ -113,6 +159,8 @@ function codewords(bytes, v) {
   return out;
 }
 
+// The eight data masks of the standard, by column x and row y: a module where
+// the condition holds is inverted.
 const MASKS = [
   (x, y) => (x + y) % 2 === 0,
   (x, y) => y % 2 === 0,
@@ -124,7 +172,18 @@ const MASKS = [
   (x, y) => (((x + y) % 2) + ((x * y) % 3)) % 2 === 0,
 ];
 
-// The symbol of a version with one mask.
+/**
+ * The symbol of a version with one mask: the function patterns (timing, the
+ * three finders with their separators, the alignment patterns, the format bits
+ * twice, the dark module, the version bits twice from version 7), then the
+ * codewords' bits in the zigzag of two-module columns from the bottom right,
+ * upwards then downwards, skipping the timing column, then the mask over the
+ * data modules only.
+ * @param {number} v - version
+ * @param {number[]} words - from codewords
+ * @param {number} mask - 0 .. 7
+ * @returns {boolean[][]} dark modules by row
+ */
 function symbol(v, words, mask) {
   const size = v * 4 + 17;
   const dark = Array.from({ length: size }, () => new Array(size).fill(false));
@@ -197,7 +256,15 @@ function symbol(v, words, mask) {
   return dark;
 }
 
-// The standard's penalty: runs, 2 by 2 blocks, finder-like patterns, balance.
+/**
+ * The standard's penalty of a masked symbol, lower is easier to read: runs of
+ * five or more modules of one colour in a row or column (3, plus 1 per module
+ * beyond five), 2 by 2 blocks of one colour (3 each), patterns that look like a
+ * finder (1:1:3:1:1 with four light modules on one side, 40 each), and the
+ * share of dark modules away from half (10 per 5 %).
+ * @param {boolean[][]} m
+ * @returns {number}
+ */
 function penalty(m) {
   const size = m.length;
   let p = 0;

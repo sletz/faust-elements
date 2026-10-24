@@ -32,11 +32,8 @@ main { flex: 1; display: flex; flex-direction: column; gap: 10px; padding: 10px 
   border: 2px solid var(--line); border-radius: 14px; min-height: 96px; letter-spacing: 0.05em;
 }
 #onoff[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
-#onoff[hidden], .bar button[hidden], #keyboard[hidden], #controls[hidden] { display: none; }
+#onoff[hidden], .bar button[hidden], #keyboard[hidden] { display: none; }
 body.no-keyboard #onoff { flex: 1; min-height: 160px; font-size: 2.4em; }
-body.controls-open #onoff { flex: none; min-height: 64px; font-size: 1.4em; }
-#controls { position: relative; flex: 1; min-height: 240px; overflow: auto; background: var(--panel); border-radius: 8px; }
-#controls .faust-ui-root { position: absolute; inset: 0; overflow: auto; }
 #octave { min-width: 2.5em; text-align: center; font-variant-numeric: tabular-nums; }
 #hold { margin-left: auto; }
 #keyboard { position: relative; display: flex; flex: 1; min-height: 160px; touch-action: none; }

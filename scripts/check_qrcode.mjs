@@ -1,5 +1,5 @@
 // web/qrcode.js against the system's QR reader (macOS: Core Image, through
-// scripts/qr_decode.swift): texts of every version 1 to 10, URLs like the
+// scripts/qr_decode.swift): texts of every version 1 to 20, URLs like the
 // page's, UTF-8; each symbol must decode to its text.
 //
 //   node scripts/check_qrcode.mjs      (make check-qrcode, macOS only)
@@ -20,7 +20,11 @@ const texts = [
 ];
 // One text per version: the longest that fits, and one byte more than the
 // version before.
-for (const n of [14, 26, 42, 62, 84, 106, 122, 152, 180, 213]) texts.push("x".repeat(n - 1) + "!");
+for (const n of [14, 26, 42, 62, 84, 106, 122, 152, 180, 213, 251, 287, 331, 362, 412, 450, 504, 560, 624, 666]) {
+  texts.push("x".repeat(n - 1) + "!");
+}
+// A static app's address with its configuration, as the page writes it.
+texts.push("https://grame-cncm.github.io/faust-elements/play/?c=" + "eyJ2IjoxLCJuIjoiUsOpZ2xhZ2VzIGR1IG1vZHVsZSIsImwiOiJmciIsInAiOjgsImsiOjEsImQiOltbMTAsMC40NV1dLCJtIjpbWzEwLCJ4IiwidXAiLC0xMCwwLDEwLDAsMC4yLDAuOTk5NV1dfQ".repeat(3));
 const tmp = mkdtempSync(join(tmpdir(), "qr-"));
 try {
   const symbols = texts.map((t) => qrMatrix(t));

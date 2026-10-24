@@ -1,17 +1,32 @@
 // The page's Phone tab: which controls follow which axis of the phone's
-// accelerometer, a simulation of the axes to hear it here, and the phone app
-// built in the page (a PWA: web/phone/ with the DSPs, the current patch and the
-// mappings), stored by the page's server (scripts/web_serve.py, POST /pwa/apps)
-// and shown as a QR code to install it from.
+// accelerometer, a simulation of the axes to hear it here, what the phone shows
+// (the keyboard, an ON/OFF button holding a note), and the phone app (a PWA)
+// shown as a QR code to install it from.
 //
-// Hosting: on the local network, over HTTPS with the certificate of make
-// pwa-cert (the phone trusts its local authority once: a second QR code), or
-// through an ngrok tunnel on a public HTTPS address.
+// Three ways to serve the app, the first two through the page's server
+// (scripts/web_serve.py, make web-serve), the third through none:
+//
+// - the local network: the page builds the app's files (web/phone/ with the
+//   DSPs, the current patch and the mappings in config.json, a manifest, icons,
+//   a service worker), the server stores them (POST /pwa/apps, build/pwa/ID/)
+//   and serves them over HTTPS with the certificate of make pwa-cert; the phone
+//   trusts the local authority once (a second QR code);
+// - the internet: the same files, through an ngrok tunnel the server opens on a
+//   public HTTPS address;
+// - this site's address (GitHub Pages, any static HTTPS host): nothing is built
+//   nor stored; the static app web/play/ reads the patch and the mappings from
+//   its address (?c=..., web/phone-config.js). The page offers only this mode
+//   when no server answers /pwa/.
+//
+// The tab's state (mappings, name, mode, what the phone shows) is kept in the
+// browser's localStorage.
 import { AXES, CURVES, mapAxis, normalize } from "./motion.js";
+import { controlList, encodeConfig } from "./phone-config.js";
 import { qrSvg } from "./qrcode.js";
 
+// The localStorage key of the tab's state.
 const STORE = "faust-elements-phone";
-// The files of an app, from the page's directory, and where they go in it.
+// The files of a built app: their path in the page's directory, and in the app.
 const ASSETS = [
   ["phone/phone.js", "phone.js"],
   ["phone/phone.css", "phone.css"],
@@ -23,16 +38,12 @@ const ASSETS = [
   ["dsp/body.wasm", "dsp/body.wasm"],
   ["dsp/body.json", "dsp/body.json"],
 ];
-// faust-ui (GPL-3.0-or-later), carried only by an app built with its interface.
-const FAUST_UI = [
-  ["vendor/faust-ui/index.js", "faust-ui/index.js"],
-  ["vendor/faust-ui/index.css", "faust-ui/index.css"],
-  ["vendor/faust-ui/README.md", "faust-ui/README.md"],
-];
+// Note names, for the ON/OFF button's note menu (MIDI key 60 is C4).
 const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 // Controls the phone leaves to its keyboard.
 const KEYBOARD = new Set(["freq", "gain", "gate"]);
 
+// The tab's words by language; {name} marks a value filled in.
 const TEXT = {
   en: {
     help: "Make an app for the phone: the current sound, a keyboard, and controls that follow the phone's motion. Tilting the phone moves the X axis (left, right) and the Y axis (towards you, away), from about −10 to 10 m/s²; Z is the screen facing up (10) or down (−10).",
@@ -43,6 +54,10 @@ const TEXT = {
     simulate: "Simulate the axes here", simulateHelp: "Move the axes to hear the mappings on this computer.",
     app: "App", name: "Name", polyphony: "Voices", hosting: "Install from",
     lan: "The local network (HTTPS, Wi-Fi)", tunnel: "The internet (ngrok tunnel)",
+    static: "This site's address (GitHub Pages, any HTTPS host): no server",
+    staticHelp: "Open, then add it to the home screen (iPhone: Share, Add to Home Screen; Android: Install app). The app carries its sound and mappings in its address: each one installs as an app of its own, and plays offline once installed.",
+    staticLocal: "This page is served from this computer ({host}): a phone cannot open this address. Publish the page (push to main: the GitHub Pages action) and build the app from the published page.",
+    noServerHere: "No build server here (a static host): only this site's address can serve the app.",
     build: "Build the app", building: "Building…", tunnelling: "Opening the tunnel…",
     noServer: "The page's server does not answer /pwa/: start it with make web-serve.",
     noCert: "No certificate for the local network: run make pwa-cert, then restart make web-serve.",
@@ -52,7 +67,6 @@ const TEXT = {
     tunnelHelp: "Open, then add it to the home screen (iPhone: Share, Add to Home Screen; Android: Install app). ngrok may first show a warning page: continue to the site. The app plays offline once installed.",
     stopTunnel: "Close the tunnel", built: "Built: {files} files, {size} MB.",
     show: "On the phone", keyboard: "Keyboard", onoff: "ON/OFF button holding the note",
-    faustUI: "faust-ui interface: every control (the app is then GPL-3.0)",
   },
   fr: {
     help: "Fabriquer une application pour le téléphone : le son courant, un clavier, et des commandes qui suivent le mouvement du téléphone. Incliner le téléphone fait varier l'axe X (gauche, droite) et l'axe Y (vers soi, loin de soi), d'environ −10 à 10 m/s² ; Z est l'écran tourné vers le haut (10) ou vers le bas (−10).",
@@ -63,6 +77,10 @@ const TEXT = {
     simulate: "Simuler les axes ici", simulateHelp: "Déplacez les axes pour entendre les associations sur cet ordinateur.",
     app: "Application", name: "Nom", polyphony: "Voix", hosting: "Installer depuis",
     lan: "Le réseau local (HTTPS, Wi-Fi)", tunnel: "Internet (tunnel ngrok)",
+    static: "L'adresse de ce site (GitHub Pages, tout hébergement HTTPS) : sans serveur",
+    staticHelp: "Ouvrez, puis ajoutez-la à l'écran d'accueil (iPhone : Partager, Sur l'écran d'accueil ; Android : Installer l'application). L'application porte son son et ses associations dans son adresse : chacune s'installe comme une application à part, et joue hors ligne une fois installée.",
+    staticLocal: "Cette page est servie par cet ordinateur ({host}) : un téléphone ne peut pas ouvrir cette adresse. Publiez la page (poussez sur main : l'action GitHub Pages) et fabriquez l'application depuis la page publiée.",
+    noServerHere: "Pas de serveur de fabrication ici (un hébergement statique) : seule l'adresse de ce site peut servir l'application.",
     build: "Fabriquer l'application", building: "Fabrication…", tunnelling: "Ouverture du tunnel…",
     noServer: "Le serveur de la page ne répond pas à /pwa/ : lancez-le avec make web-serve.",
     noCert: "Pas de certificat pour le réseau local : lancez make pwa-cert, puis relancez make web-serve.",
@@ -72,10 +90,10 @@ const TEXT = {
     tunnelHelp: "Ouvrez, puis ajoutez-la à l'écran d'accueil (iPhone : Partager, Sur l'écran d'accueil ; Android : Installer l'application). ngrok peut d'abord afficher une page d'avertissement : continuez vers le site. Une fois installée, l'application joue hors ligne.",
     stopTunnel: "Fermer le tunnel", built: "Fabriquée : {files} fichiers, {size} Mo.",
     show: "Sur le téléphone", keyboard: "Clavier", onoff: "Bouton ON/OFF qui tient la note",
-    faustUI: "Interface faust-ui : toutes les commandes (l'application est alors sous GPL-3.0)",
   },
 };
 
+/** @returns {Object} the tab's saved state, or {} (none, or storage refused) */
 function load() {
   try {
     return JSON.parse(localStorage.getItem(STORE) || "null") || {};
@@ -84,6 +102,7 @@ function load() {
   }
 }
 
+/** Saves the tab's state. @param {Object} state */
 function save(state) {
   try {
     localStorage.setItem(STORE, JSON.stringify(state));
@@ -92,15 +111,27 @@ function save(state) {
   }
 }
 
+/** @param {string} s @returns {string} s safe inside HTML text or attributes */
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
+/**
+ * Bytes as base64, by chunks (String.fromCharCode takes a bounded number of
+ * arguments).
+ * @param {Uint8Array} bytes
+ * @returns {string}
+ */
 function base64(bytes) {
   let s = "";
   for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   return btoa(s);
 }
 
-// An app's id: the time it was built and six random characters.
+/**
+ * A built app's id, its directory on the server: the time it was built and six
+ * random characters (YYYYMMDD-HHMMSS-xxxxxx, the server checks this form), so
+ * that ids sort by date and cannot be guessed.
+ * @returns {string}
+ */
 function appId() {
   const d = new Date();
   const p = (n, w = 2) => String(n).padStart(w, "0");
@@ -108,7 +139,13 @@ function appId() {
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}-${rand}`;
 }
 
-// The app's icon: rings of a resonator and the name's initial, as a PNG.
+/**
+ * A built app's icon: four rings of a resonator fading outwards and the name's
+ * initial, drawn on a canvas.
+ * @param {number} size - width and height, px
+ * @param {string} name - the app's name
+ * @returns {Promise<Uint8Array>} a PNG
+ */
 async function icon(size, name) {
   const canvas = document.createElement("canvas");
   canvas.width = canvas.height = size;
@@ -134,6 +171,7 @@ async function icon(size, name) {
 }
 
 /**
+ * Builds the Phone tab into its panel.
  * @param {HTMLElement} container - the tab's panel content (emptied)
  * @param {Object} o
  * @param {string} o.lang - "en" or "fr"
@@ -148,12 +186,18 @@ async function icon(size, name) {
 export function createPhoneTab(container, o) {
   const T = TEXT[o.lang] || TEXT.en;
   const state = load();
+  // The controls a mapping can drive: those of the DSPs but the keyboard's.
   const keys = o.controls.filter((c) => o.ranges.has(c.key) && !KEYBOARD.has(c.key)).map((c) => c.key);
+  /** @param {string} key @returns {string} the control's label in the page's language */
   const label = (key) => (o.controls.find((c) => c.key === key) || { [o.lang]: [key] })[o.lang][0];
+  // The mappings, as normalized by motion.js (those of controls no longer there dropped).
   let mappings = (state.mappings || []).filter((m) => o.ranges.has(m.key));
+  // Saves the tab's state; the inputs it reads are defined below, before any
+  // change can call it.
   const persist = () => save({ ...load(), mappings, name: nameInput.value, hosting: hostingValue(), show: showValue() });
 
   container.innerHTML = "";
+  /** A new element with a class and a text, both optional. */
   const el = (tag, cls, text) => {
     const e = document.createElement(tag);
     if (cls) e.className = cls;
@@ -170,6 +214,7 @@ export function createPhoneTab(container, o) {
   add.type = "button";
   container.append(add);
 
+  /** A number input with a value and a step. */
   const numberInput = (value, step) => {
     const i = document.createElement("input");
     i.type = "number";
@@ -177,6 +222,7 @@ export function createPhoneTab(container, o) {
     i.value = String(value);
     return i;
   };
+  /** A select of [value, text] options, one of them selected. */
   const select = (options, value) => {
     const s = document.createElement("select");
     for (const [v, text] of options) {
@@ -189,11 +235,25 @@ export function createPhoneTab(container, o) {
     return s;
   };
 
+  /**
+   * A new mapping of a control: X, Up, the axis over -10 .. 10 m/s² (about the
+   * phone's tilt from one side to the other), onto the whole range of the
+   * control with its current value at the centre (the phone held flat).
+   * @param {string} key
+   * @returns {Object}
+   */
   function defaults(key) {
     const r = o.ranges.get(key);
     return { key, axis: "x", curve: "up", amin: -10, amid: 0, amax: 10, min: r.min, centre: o.values.get(key) ?? r.init, max: r.max };
   }
 
+  /**
+   * Draws the table of the mappings, one row each: the control, the axis, the
+   * curve, the axis's three points, the control's three values, a remove
+   * button. Choosing another control starts its row from that control's
+   * defaults (the axis and the curve kept); any other change is normalized and
+   * saved, and heard at once when the simulation is on.
+   */
   function drawMappings() {
     table.innerHTML = "";
     if (!mappings.length) return;
@@ -242,6 +302,7 @@ export function createPhoneTab(container, o) {
     });
   }
 
+  // A new mapping, of the first control not mapped yet.
   add.addEventListener("click", () => {
     const free = keys.find((k) => !mappings.some((m) => m.key === k)) || keys[0];
     mappings.push(normalize(defaults(free), o.ranges.get(free)));
@@ -249,7 +310,8 @@ export function createPhoneTab(container, o) {
     drawMappings();
   });
 
-  // --- The simulation: three sliders in place of the phone's axes.
+  // --- The simulation: three sliders in place of the phone's axes (Z starts
+  // at 9.8, the phone lying flat, screen up), applied through the same curves.
   const sim = el("div", "phone-sim");
   const simLabel = el("label");
   const simBox = document.createElement("input");
@@ -279,6 +341,7 @@ export function createPhoneTab(container, o) {
   simBox.addEventListener("change", simulate);
   container.append(sim);
 
+  /** Applies the mappings to the simulated axes, when the simulation is on. */
   function simulate() {
     if (!simBox.checked) return;
     for (const m of mappings) {
@@ -289,7 +352,7 @@ export function createPhoneTab(container, o) {
     }
   }
 
-  // --- The app.
+  // --- The app: its name, how it is served, what it shows, the build button.
   container.append(el("h3", "", T.app));
   const form = el("div", "phone-app");
   const nameLabel = el("label", "", `${T.name} `);
@@ -301,7 +364,7 @@ export function createPhoneTab(container, o) {
   nameLabel.append(nameInput);
   const hosting = el("fieldset", "phone-hosting");
   hosting.append(el("legend", "", T.hosting));
-  for (const [v, text] of [["lan", T.lan], ["tunnel", T.tunnel]]) {
+  for (const [v, text] of [["lan", T.lan], ["tunnel", T.tunnel], ["static", T.static]]) {
     const l = el("label");
     const r = document.createElement("input");
     r.type = "radio";
@@ -312,13 +375,28 @@ export function createPhoneTab(container, o) {
     l.append(r, ` ${text}`);
     hosting.append(l);
   }
+  /** @returns {string} the chosen way to serve the app: "lan", "tunnel" or "static" */
   const hostingValue = () => hosting.querySelector("input:checked")?.value || "lan";
+  const hostingNote = el("p", "help");
+  hosting.append(hostingNote);
+  // Served by a static host (GitHub Pages: no /pwa/ API), only the static
+  // address can serve the app: the server's modes are turned off.
+  fetch("/pwa/info").then((r) => {
+    if (!(r.headers.get("Content-Type") || "").includes("application/json")) throw new Error();
+  }).catch(() => {
+    for (const radio of hosting.querySelectorAll("input")) {
+      radio.disabled = radio.value !== "static";
+      radio.checked = radio.value === "static";
+    }
+    hostingNote.textContent = T.noServerHere;
+  });
 
   // What the app shows: the keyboard, an ON/OFF button holding a note (as the
-  // SmartFaust apps' ON/OFF switch), the faust-ui interface of every control.
-  const shown = { keyboard: true, onoff: false, note: 57, faustUI: false, ...(state.show || {}) };
+  // SmartFaust apps' ON/OFF switch).
+  const shown = { keyboard: true, onoff: false, note: 57, ...(state.show || {}) };
   const show = el("fieldset", "phone-show");
   show.append(el("legend", "", T.show));
+  /** A checkbox of what the phone shows, saved under its key. */
   const check = (key, text) => {
     const l = el("label");
     const c = document.createElement("input");
@@ -336,7 +414,8 @@ export function createPhoneTab(container, o) {
   }), String(shown.note));
   note.addEventListener("change", persist);
   onoffRow.append(" ", note);
-  show.append(check("keyboard", T.keyboard), onoffRow, check("faustUI", T.faustUI));
+  show.append(check("keyboard", T.keyboard), onoffRow);
+  /** @returns {{keyboard: boolean, onoff: boolean, note: number}} what the phone shows */
   const showValue = () => ({
     ...Object.fromEntries([...show.querySelectorAll("input[data-show]")].map((c) => [c.dataset.show, c.checked])),
     note: Number(note.value),
@@ -347,6 +426,15 @@ export function createPhoneTab(container, o) {
   const result = el("div", "phone-result");
   container.append(form, result);
 
+  /**
+   * A request to the page's server (/pwa/...): GET without a body, else POST of
+   * JSON. Anything but JSON in reply means no server (a static host, or
+   * another server).
+   * @param {string} path
+   * @param {Object} [body]
+   * @returns {Promise<Object>} the reply; an error reply without the server's
+   *   addresses is thrown as an Error with its message
+   */
   async function api(path, body) {
     const r = await fetch(path, body === undefined ? undefined : {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
@@ -358,6 +446,17 @@ export function createPhoneTab(container, o) {
     return json;
   }
 
+  /**
+   * The files of a built app, as the server stores them: the page's files the
+   * app uses (ASSETS), its page (web/phone/index.html with its language and
+   * name), config.json (the patch, the mappings and what the phone shows them
+   * with), the manifest, the icons, and the service worker caching all of them
+   * under a cache named after the build.
+   * @param {string} id - the app's id
+   * @param {string} name - its name
+   * @returns {Promise<{files: Object<string, string>, size: number}>} each
+   *   file's base64 by path, and the total size in bytes
+   */
   async function makeFiles(id, name) {
     const files = {};
     let size = 0;
@@ -367,7 +466,7 @@ export function createPhoneTab(container, o) {
     };
     const text = (s) => new TextEncoder().encode(s);
     const view = showValue();
-    for (const [from, to] of [...ASSETS, ...(view.faustUI ? FAUST_UI : [])]) {
+    for (const [from, to] of ASSETS) {
       const r = await fetch(from, { cache: "no-store" });
       if (!r.ok) throw new Error(`${from}: ${r.status}`);
       put(to, new Uint8Array(await r.arrayBuffer()));
@@ -379,7 +478,7 @@ export function createPhoneTab(container, o) {
     const used = new Set(mappings.map((m) => m.key));
     const config = {
       name, lang: o.lang, build: id, polyphony: o.polyphony(), velocity: 0.8, octave: 4,
-      keyboard: view.keyboard, onoff: view.onoff ? { key: view.note } : null, faustUI: view.faustUI,
+      keyboard: view.keyboard, onoff: view.onoff ? { key: view.note } : null,
       patch,
       mappings: mappings.map((m) => normalize(m, o.ranges.get(m.key))),
       labels: Object.fromEntries([...used].map((k) => [k, label(k)])),
@@ -406,12 +505,41 @@ export function createPhoneTab(container, o) {
     return { files, size };
   }
 
+  /**
+   * The static app's address for the current sound and mappings: play/?c= with
+   * the configuration encoded by phone-config.js, whose control indices follow
+   * the DSPs' JSON, read here as the phone will read it.
+   * @param {string} name - the app's name
+   * @returns {Promise<string>}
+   */
+  async function staticAddress(name) {
+    const [voiceJson, bodyJson] = await Promise.all(["dsp/voice.json", "dsp/body.json"].map((p) => fetch(p).then((r) => r.json())));
+    const view = showValue();
+    const patch = {};
+    for (const [k, v] of o.values) if (!KEYBOARD.has(k)) patch[k] = v;
+    const c = encodeConfig({
+      name, lang: o.lang, polyphony: o.polyphony(), keyboard: view.keyboard,
+      onoff: view.onoff ? { key: view.note } : null, patch,
+      mappings: mappings.map((m) => normalize(m, o.ranges.get(m.key))),
+    }, controlList(voiceJson, bodyJson));
+    return new URL(`play/?c=${c}`, location.href).href;
+  }
+
+  /**
+   * Shows the app's address as a QR code, a link and how to install it; on the
+   * local network, the local authority's address first; through the tunnel, a
+   * button closing it.
+   * @param {?Object} info - the server's addresses (/pwa/info), null for static
+   * @param {string} url - the app's address
+   * @param {string} mode - "lan", "tunnel" or "static"
+   */
   function showLinks(info, url, mode) {
     result.innerHTML = "";
     const block = (title, help, link) => {
       const b = el("div", "phone-qr");
       const qr = el("div", "qr");
-      qr.innerHTML = qrSvg(link, 200);
+      // A static address carries the configuration: its symbol is denser, so larger.
+      qr.innerHTML = qrSvg(link, link.length > 150 ? 280 : 200);
       const a = el("a", "", link);
       a.href = link;
       a.target = "_blank";
@@ -421,7 +549,9 @@ export function createPhoneTab(container, o) {
       b.append(qr, textCol);
       result.append(b);
     };
-    if (mode === "lan") {
+    if (mode === "static") {
+      block(T.app, T.staticHelp, url);
+    } else if (mode === "lan") {
       block(T.step1, T.step1Help, info.lan.ca);
       block(T.step2, T.step2Help, url);
     } else {
@@ -436,6 +566,9 @@ export function createPhoneTab(container, o) {
     }
   }
 
+  // The build: the static address at once; else the files built, stored by the
+  // server, the tunnel opened if asked, and the addresses shown. Any failure
+  // (no server, no certificate, ngrok refusing) is shown in their place.
   build.addEventListener("click", async () => {
     build.disabled = true;
     result.innerHTML = "";
@@ -443,12 +576,22 @@ export function createPhoneTab(container, o) {
     result.append(status);
     try {
       const mode = hostingValue();
+      const name = nameInput.value.trim() || o.presetName();
+      if (mode === "static") {
+        // No file to build nor store: the static app (play/) reads the sound and
+        // the mappings from its address.
+        const url = await staticAddress(name);
+        showLinks(null, url, mode);
+        if (/^(localhost|127\.|\[::1\])/.test(location.hostname) || location.protocol !== "https:") {
+          result.append(el("p", "phone-error", T.staticLocal.replace("{host}", location.host)));
+        }
+        return;
+      }
       let info = await api("/pwa/info");
       if (mode === "lan") {
         if (!info.lan.serving || !info.lan.cert_ip) throw new Error(T.noCert);
         if (!info.lan.certified) throw new Error(T.certMoved.replace("{old}", info.lan.cert_ip).replace("{new}", info.lan.ip));
       }
-      const name = nameInput.value.trim() || o.presetName();
       const id = appId();
       const { files, size } = await makeFiles(id, name);
       info = await api("/pwa/apps", { id, files });

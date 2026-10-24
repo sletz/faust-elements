@@ -1,0 +1,408 @@
+{
+	"name": "elements_poly",
+	"filename": "elements_poly.dsp",
+	"version": "0.9.2",
+	"compile_options": "-lang wasm -single",
+	"library_list": ["dsp/elements.lib","dsp/elements_tables.lib","/usr/local/share/faust/basics.lib","/usr/local/share/faust/signals.lib"],
+	"include_pathnames": ["dsp","/Users/letz/Developpements/RUST/faust-elements/../faust-rs/target/share/faust","/usr/local/share/faust","/usr/share/faust"],
+	"size": 1683308,
+	"inputs": 0,
+	"outputs": 3,
+	"sr_index": 0,
+	"meta": [ 
+		{ "/Users/letz/Developpements/RUST/faust-elements/dsp/elements.lib/BS:license": "MIT" },
+		{ "/Users/letz/Developpements/RUST/faust-elements/dsp/elements.lib/SR:license": "MIT" },
+		{ "/Users/letz/Developpements/RUST/faust-elements/dsp/elements.lib/author": "Stéphane Letz" },
+		{ "/Users/letz/Developpements/RUST/faust-elements/dsp/elements.lib/blk:license": "MIT" },
+		{ "/Users/letz/Developpements/RUST/faust-elements/dsp/elements.lib/blow_granular:license": "MIT" },
+		{ "/Users/letz/Developpements/RUST/faust-elements/dsp/elements.lib/bow_flow:license": "MIT" },
+		{ "/Users/letz/Developpements/RUST/faust-elements/dsp/elements.lib/bpos:license": "MIT" },
+		{ "/Users/letz/Developpements/RUST/faust-elements/dsp/elements.lib/copyright": "Faust model: GRAME, 2026; Elements C++: Emilie Gillet, 2014" },
+		{ "/Users/letz/Developpements/RUST/faust-elements/dsp/elements.lib/diffuser:license": "MIT" },
+		{ "/Users/letz/Developpements/RUST/faust-elements/dsp/elements.lib/envelope_block:license": "MIT" },
+		{ "/Users/letz/Developpements/RUST/faust-elements/dsp/elements.lib/freq2note:license": "MIT" },
+		{ "/Users/letz/Developpements/RUST/faust-elements/dsp/elements.lib/gate_flags:license": "MIT" },
+		{ "/Users/letz/Developpements/RUST/faust-elements/dsp/elements.lib/license": "MIT" },
+		{ "/Users/letz/Developpements/RUST/faust-elements/dsp/elements.lib/modes_block:license": "MIT" },
+		{ "/Users/letz/Developpements/RUST/faust-elements/dsp/elements.lib/name": "elements" },
+		{ "/Users/letz/Developpements/RUST/faust-elements/dsp/elements.lib/note2f:license": "MIT" },
+		{ "/Users/letz/Developpements/RUST/faust-elements/dsp/elements.lib/random_block:license": "MIT" },
+		{ "/Users/letz/Developpements/RUST/faust-elements/dsp/elements.lib/resonator:license": "MIT" },
+		{ "/Users/letz/Developpements/RUST/faust-elements/dsp/elements.lib/s2r:license": "MIT" },
+		{ "/Users/letz/Developpements/RUST/faust-elements/dsp/elements.lib/string:license": "MIT" },
+		{ "/Users/letz/Developpements/RUST/faust-elements/dsp/elements.lib/svf_lp:license": "MIT" },
+		{ "/Users/letz/Developpements/RUST/faust-elements/dsp/elements.lib/tube:license": "MIT" },
+		{ "/Users/letz/Developpements/RUST/faust-elements/dsp/elements.lib/version": "0.1.0" },
+		{ "/Users/letz/Developpements/RUST/faust-elements/dsp/elements.lib/voice:license": "MIT" },
+		{ "/Users/letz/Developpements/RUST/faust-elements/dsp/elements_tables.lib/license": "MIT" },
+		{ "/Users/letz/Developpements/RUST/faust-elements/dsp/elements_tables.lib/name": "elements_tables" },
+		{ "/usr/local/share/faust/basics.lib/name": "Faust Basic Element Library" },
+		{ "/usr/local/share/faust/basics.lib/parallelMax:author": "Bart Brouns" },
+		{ "/usr/local/share/faust/basics.lib/parallelMax:copyright": "Copyright (c) 2020 Bart Brouns <bart@magnetophon.nl>" },
+		{ "/usr/local/share/faust/basics.lib/parallelMax:licence": "GPL-3.0-only" },
+		{ "/usr/local/share/faust/basics.lib/parallelOp:author": "Bart Brouns" },
+		{ "/usr/local/share/faust/basics.lib/parallelOp:copyright": "Copyright (c) 2020 Bart Brouns <bart@magnetophon.nl>" },
+		{ "/usr/local/share/faust/basics.lib/parallelOp:licence": "GPL-3.0-only" },
+		{ "/usr/local/share/faust/basics.lib/version": "1.23.6" },
+		{ "/usr/local/share/faust/signals.lib/name": "Faust Routing Library" },
+		{ "/usr/local/share/faust/signals.lib/version": "1.8.0" },
+		{ "compile_options": "-lang wasm -single" },
+		{ "filename": "elements_poly.dsp" },
+		{ "name": "elements_poly" },
+		{ "options": "[midi:on][nvoices:4]" }
+	],
+	"ui": [ 
+		{
+			"type": "vgroup",
+			"label": "elements_poly",
+			"items": [ 
+				{
+					"type": "hgroup",
+					"label": "performance",
+					"meta": [
+						{ "0": "" }
+					],
+					"items": [ 
+						{
+							"type": "hslider",
+							"label": "modulation",
+							"varname": "fHslider6",
+							"shortname": "modulation",
+							"address": "/elements_poly/performance/modulation",
+							"index": 80,
+							"meta": [
+								{ "2": "" }
+							],
+							"init": 0,
+							"min": -60,
+							"max": 60,
+							"step": 0.001
+						}
+					]
+				},
+				{
+					"type": "hgroup",
+					"label": "exciter",
+					"meta": [
+						{ "1": "" }
+					],
+					"items": [ 
+						{
+							"type": "vslider",
+							"label": "envelope",
+							"varname": "fVslider10",
+							"shortname": "envelope",
+							"address": "/elements_poly/exciter/envelope",
+							"index": 36,
+							"meta": [
+								{ "0": "" },
+								{ "tooltip": "contour: percussive, AD, ADSR, AR" }
+							],
+							"init": 1,
+							"min": 0,
+							"max": 1,
+							"step": 0.001
+						},
+						{
+							"type": "vslider",
+							"label": "bow",
+							"varname": "fVslider11",
+							"shortname": "bow",
+							"address": "/elements_poly/exciter/bow",
+							"index": 40,
+							"meta": [
+								{ "1": "" },
+								{ "tooltip": "bow level" }
+							],
+							"init": 0,
+							"min": 0,
+							"max": 1,
+							"step": 0.001
+						},
+						{
+							"type": "vslider",
+							"label": "blow",
+							"varname": "fVslider16",
+							"shortname": "blow",
+							"address": "/elements_poly/exciter/blow",
+							"index": 56,
+							"meta": [
+								{ "2": "" },
+								{ "tooltip": "blow level; above 2/3 the reed tube" }
+							],
+							"init": 0,
+							"min": 0,
+							"max": 1,
+							"step": 0.001
+						},
+						{
+							"type": "vslider",
+							"label": "strike",
+							"varname": "fVslider17",
+							"shortname": "strike",
+							"address": "/elements_poly/exciter/strike",
+							"index": 60,
+							"meta": [
+								{ "3": "" },
+								{ "tooltip": "strike level; above 0.8 the mallet bleeds" }
+							],
+							"init": 0.8,
+							"min": 0,
+							"max": 1,
+							"step": 0.001
+						},
+						{
+							"type": "vslider",
+							"label": "bow_timbre",
+							"varname": "fVslider8",
+							"shortname": "bow_timbre",
+							"address": "/elements_poly/exciter/bow_timbre",
+							"index": 8,
+							"meta": [
+								{ "4": "" }
+							],
+							"init": 0.5,
+							"min": 0,
+							"max": 0.9995,
+							"step": 0.001
+						},
+						{
+							"type": "vslider",
+							"label": "flow",
+							"varname": "fVslider14",
+							"shortname": "flow",
+							"address": "/elements_poly/exciter/flow",
+							"index": 48,
+							"meta": [
+								{ "5": "" },
+								{ "tooltip": "blow meta: granular restart point" }
+							],
+							"init": 0.5,
+							"min": 0,
+							"max": 0.9995,
+							"step": 0.001
+						},
+						{
+							"type": "vslider",
+							"label": "blow_timbre",
+							"varname": "fVslider13",
+							"shortname": "blow_timbre",
+							"address": "/elements_poly/exciter/blow_timbre",
+							"index": 44,
+							"meta": [
+								{ "6": "" }
+							],
+							"init": 0.5,
+							"min": 0,
+							"max": 0.9995,
+							"step": 0.001
+						},
+						{
+							"type": "vslider",
+							"label": "mallet",
+							"varname": "fVslider2",
+							"shortname": "mallet",
+							"address": "/elements_poly/exciter/mallet",
+							"index": 20,
+							"meta": [
+								{ "7": "" },
+								{ "tooltip": "strike meta: samples, mallet, plectrum, particles" }
+							],
+							"init": 0.5,
+							"min": 0,
+							"max": 0.9995,
+							"step": 0.001
+						},
+						{
+							"type": "vslider",
+							"label": "strike_timbre",
+							"varname": "fVslider3",
+							"shortname": "strike_timbre",
+							"address": "/elements_poly/exciter/strike_timbre",
+							"index": 28,
+							"meta": [
+								{ "8": "" }
+							],
+							"init": 0.5,
+							"min": 0,
+							"max": 0.995,
+							"step": 0.001
+						}
+					]
+				},
+				{
+					"type": "hgroup",
+					"label": "resonator",
+					"meta": [
+						{ "2": "" }
+					],
+					"items": [ 
+						{
+							"type": "vslider",
+							"label": "geometry",
+							"varname": "fVslider7",
+							"shortname": "geometry",
+							"address": "/elements_poly/resonator/geometry",
+							"index": 16,
+							"meta": [
+								{ "0": "" }
+							],
+							"init": 0.2,
+							"min": 0,
+							"max": 0.9995,
+							"step": 0.001
+						},
+						{
+							"type": "vslider",
+							"label": "brightness",
+							"varname": "fVslider9",
+							"shortname": "brightness",
+							"address": "/elements_poly/resonator/brightness",
+							"index": 12,
+							"meta": [
+								{ "1": "" }
+							],
+							"init": 0.5,
+							"min": 0,
+							"max": 0.9995,
+							"step": 0.001
+						},
+						{
+							"type": "vslider",
+							"label": "damping",
+							"varname": "fVslider15",
+							"shortname": "damping",
+							"address": "/elements_poly/resonator/damping",
+							"index": 52,
+							"meta": [
+								{ "2": "" }
+							],
+							"init": 0.25,
+							"min": 0,
+							"max": 0.9995,
+							"step": 0.001
+						},
+						{
+							"type": "vslider",
+							"label": "position",
+							"varname": "fVslider18",
+							"shortname": "position",
+							"address": "/elements_poly/resonator/position",
+							"index": 64,
+							"meta": [
+								{ "3": "" }
+							],
+							"init": 0.3,
+							"min": 0,
+							"max": 0.9995,
+							"step": 0.001
+						},
+						{
+							"type": "nentry",
+							"label": "model",
+							"varname": "fEntry0",
+							"shortname": "model",
+							"address": "/elements_poly/resonator/model",
+							"index": 4,
+							"meta": [
+								{ "4": "" },
+								{ "tooltip": "0 modal, 1 string, 2 strings" }
+							],
+							"init": 0,
+							"min": 0,
+							"max": 2,
+							"step": 1
+						}
+					]
+				},
+				{
+					"type": "hgroup",
+					"label": "unit",
+					"meta": [
+						{ "4": "" }
+					],
+					"items": [ 
+						{
+							"type": "vslider",
+							"label": "signature",
+							"varname": "fVslider4",
+							"shortname": "signature",
+							"address": "/elements_poly/unit/signature",
+							"index": 32,
+							"meta": [
+								{ "0": "" }
+							],
+							"init": 0,
+							"min": 0,
+							"max": 0.99,
+							"step": 0.001
+						},
+						{
+							"type": "vslider",
+							"label": "mod_frequency",
+							"varname": "fVslider19",
+							"shortname": "mod_frequency",
+							"address": "/elements_poly/unit/mod_frequency",
+							"index": 72,
+							"meta": [
+								{ "1": "" },
+								{ "unit": "Hz" }
+							],
+							"init": 0.5,
+							"min": 0,
+							"max": 2,
+							"step": 0.001
+						},
+						{
+							"type": "vslider",
+							"label": "mod_offset",
+							"varname": "fVslider20",
+							"shortname": "mod_offset",
+							"address": "/elements_poly/unit/mod_offset",
+							"index": 68,
+							"meta": [
+								{ "2": "" }
+							],
+							"init": 0.1,
+							"min": 0,
+							"max": 0.5,
+							"step": 0.001
+						}
+					]
+				},
+				{
+					"type": "hslider",
+					"label": "freq",
+					"varname": "fHslider5",
+					"shortname": "freq",
+					"address": "/elements_poly/freq",
+					"index": 84,
+					"init": 220,
+					"min": 8,
+					"max": 12000,
+					"step": 0.001
+				},
+				{
+					"type": "hslider",
+					"label": "gain",
+					"varname": "fHslider12",
+					"shortname": "gain",
+					"address": "/elements_poly/gain",
+					"index": 76,
+					"init": 0.5,
+					"min": 0,
+					"max": 1,
+					"step": 0.001
+				},
+				{
+					"type": "button",
+					"label": "gate",
+					"varname": "fButton1",
+					"shortname": "gate",
+					"address": "/elements_poly/gate",
+					"index": 24
+				}
+			]
+		}
+	]
+}
