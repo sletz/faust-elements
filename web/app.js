@@ -3,6 +3,7 @@
 // notes from the on-screen keyboard, the computer keyboard and Web MIDI.
 import { CONTROLS, GROUPS, PRESETS } from "./controls.js";
 import { controlKey, uiItems } from "./faust-wasm-dsp.js";
+import { createAtlas } from "./atlas.js";
 import { createOrbit } from "./orbit.js";
 
 const DSP_DIR = "dsp/";
@@ -25,6 +26,17 @@ const TEXT = {
     orbitTab: "Orbit",
     orbitHelp: "Every control is a dot: drag one, or the centre to move them all; Random scatters them. Library opens the presets projected on a plane: click a disc to recall it, drag the cross between discs to morph from one sound to another, double-click to keep the current sound. Play notes while you explore.",
     orbitCenter: "Bring every control back to the centre", orbitRandom: "Scatter the controls at random",
+    atlasTab: "Atlas",
+    atlasHelp: "Sounds of the instrument, the presets and random patches, each played offline as A3 for one second, measured, and laid out by what they sound like. Hover a dot to read its measures, click it to load the patch and hear it. The axes are the two principal components of the measures (all but the loudness), or any measure.",
+    atlasMissing: "No atlas yet: run make web-atlas to compute web/atlas.json.",
+    atlas: {
+      axes: {
+        brightness: ["Brightness", "Hz"], noisiness: ["Noisiness", "dB"], harmonicity: ["Harmonicity", ""],
+        attack: ["Attack", "s"], sustain: ["Sustain", "dB"], decay: ["Decay", "s"], loudness: ["Loudness", "dBFS"], width: ["Width", "dB"],
+      },
+      models: ["modal", "string", "chord of strings"],
+      pc: "Component", sound: "Sound", xAxis: "Horizontal", yAxis: "Vertical", play: "Play on click",
+    },
   },
   fr: {
     title: "Mutable Instruments Elements en Faust",
@@ -37,6 +49,17 @@ const TEXT = {
     orbitTab: "Orbite",
     orbitHelp: "Chaque commande est un point : déplacez-en un, ou le centre pour les déplacer tous ; Random les disperse. Library ouvre les préréglages projetés sur un plan : cliquez un disque pour le rappeler, glissez la croix entre les disques pour passer d'un son à l'autre, double-cliquez pour garder le son courant. Jouez des notes pendant l'exploration.",
     orbitCenter: "Ramener toutes les commandes au centre", orbitRandom: "Disperser les commandes au hasard",
+    atlasTab: "Atlas",
+    atlasHelp: "Des sons de l'instrument, les préréglages et des réglages tirés au hasard, chacun joué hors ligne en la 3 pendant une seconde, mesuré, et placé selon ce qu'il fait entendre. Survolez un point pour lire ses mesures, cliquez-le pour charger le réglage et l'écouter. Les axes sont les deux composantes principales des mesures (toutes sauf le niveau), ou n'importe quelle mesure.",
+    atlasMissing: "Pas encore d'atlas : lancez make web-atlas pour calculer web/atlas.json.",
+    atlas: {
+      axes: {
+        brightness: ["Brillance", "Hz"], noisiness: ["Bruit", "dB"], harmonicity: ["Harmonicité", ""],
+        attack: ["Attaque", "s"], sustain: ["Tenue", "dB"], decay: ["Extinction", "s"], loudness: ["Niveau", "dBFS"], width: ["Largeur", "dB"],
+      },
+      models: ["modal", "corde", "accord de cordes"],
+      pc: "Composante", sound: "Son", xAxis: "Horizontal", yAxis: "Vertical", play: "Jouer au clic",
+    },
     keysHelp: "Clavier d'ordinateur : deux rangées depuis Z et Q (W et A en AZERTY), ← → changent l'octave, la barre d'espace maintient les notes tant qu'elle est enfoncée. Double-cliquez une commande pour la remettre à zéro.",
     sustain: "Maintien (pédale)",
     sustainHelp: "Tant qu'il est actif, les touches relâchées continuent de sonner, pour faire des accords : désactivez-le pour les arrêter. Aussi la barre d'espace et une pédale MIDI (CC64). Augmentez la polyphonie pour les grands accords.",
@@ -72,6 +95,13 @@ function send(message) {
 let orbit = null;
 const orbitHost = document.createElement("div");
 orbitHost.id = "orbit-root";
+// The atlas (web/atlas.js) of the sounds of web/atlas.json, loaded the first
+// time its tab is shown; the patch last loaded from it.
+let atlas = null;
+let atlasData = null;
+let atlasCurrent = -1;
+const atlasHost = document.createElement("div");
+atlasHost.id = "atlas-root";
 // True while a preset sets every control, so that the orbit is updated once.
 let batching = false;
 
@@ -199,7 +229,10 @@ function buildControls() {
   const groups = [
     ...GROUPS.filter((g) => CONTROLS.some((c) => c.group === g.id && ranges.has(c.key))),
     { id: "orbit", en: TEXT.en.orbitTab, fr: TEXT.fr.orbitTab },
+    { id: "atlas", en: TEXT.en.atlasTab, fr: TEXT.fr.atlasTab },
   ];
+  // The atlas is drawn again in the new language when its tab is shown.
+  atlas = null;
   if (!groups.some((g) => g.id === currentTab)) currentTab = groups[0].id;
   const bar = document.createElement("div");
   bar.className = "tabs";
@@ -226,6 +259,13 @@ function buildControls() {
       help.className = "help";
       help.textContent = t("orbitHelp");
       panel.append(help, orbitHost);
+    }
+    if (g.id === "atlas") {
+      panel.classList.add("atlas-panel");
+      const help = document.createElement("p");
+      help.className = "help";
+      help.textContent = t("atlasHelp");
+      panel.append(help, atlasHost);
     }
     for (const c of CONTROLS.filter((x) => x.group === g.id && ranges.has(x.key))) {
       const r = ranges.get(c.key);
@@ -284,6 +324,61 @@ function showTab(id) {
       else orbit = makeOrbit();
     });
   }
+  if (id === "atlas") showAtlas();
+}
+
+async function showAtlas() {
+  if (atlas) {
+    requestAnimationFrame(() => atlas.resize());
+    return;
+  }
+  if (!atlasData) {
+    try {
+      const r = await fetch("atlas.json");
+      if (!r.ok) throw new Error(r.statusText);
+      atlasData = await r.json();
+    } catch {
+      atlasHost.innerHTML = "";
+      const p = document.createElement("p");
+      p.className = "help";
+      p.textContent = t("atlasMissing");
+      atlasHost.appendChild(p);
+      return;
+    }
+  }
+  if (atlas || currentTab !== "atlas") return;
+  atlas = createAtlas(atlasHost, {
+    data: atlasData,
+    text: t("atlas"),
+    presetName: (id) => PRESETS.find((p) => p.id === id)?.[lang][0] ?? id,
+    onPick: loadAtlasSound,
+    current: atlasCurrent,
+  });
+}
+
+// A sound of the atlas: its patch over the defaults, as a preset is, then the
+// note it was measured with.
+let auditionTimer = 0;
+function loadAtlasSound(index, play) {
+  atlasCurrent = index;
+  const p = atlasData.points[index];
+  const at = new Map(atlasData.controls.map((k, j) => [k, p.v[j]]));
+  batching = true;
+  for (const [k, r] of ranges) setControl(k, at.has(k) ? at.get(k) : r.init);
+  batching = false;
+  if (orbit) orbit.setValues([...values]);
+  if (p.preset) {
+    $("preset").value = p.preset;
+    showPresetHelp();
+  } else {
+    markPresetModified();
+  }
+  if (!play) return;
+  const { key, velocity, hold } = atlasData.note;
+  clearTimeout(auditionTimer);
+  if (sources.get(key)?.has("atlas")) noteOff(key, "atlas");
+  noteOn(key, velocity, "atlas");
+  auditionTimer = setTimeout(() => noteOff(key, "atlas"), 1000 * hold);
 }
 
 function makeOrbit() {

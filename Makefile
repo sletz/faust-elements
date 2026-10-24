@@ -23,6 +23,9 @@
 #                    none above 0 dBFS (node)
 #   make web-fuzz    random patches (as the orbit's Random) through the wasm: none
 #                    diverges (node)
+#   make web-atlas   the atlas of the page: 2,000 random patches and the presets
+#                    rendered with the wasm, measured and laid out (web/atlas.json,
+#                    about a minute; node)
 #   make web-serve [PORT=8000]
 #                    serve the repository; open http://localhost:PORT/web/
 #   make clean       remove build/
@@ -50,7 +53,7 @@ ELEMENTS_SRC = $(addprefix $(ELEMENTS)/elements/dsp/,exciter.cc multistage_envel
 # The reference arithmetic is pinned: no fused multiply-add, no fast-math.
 REF_FLAGS = -std=c++14 -O2 -ffp-contract=off -DTEST -I $(ELEMENTS) -Wno-everything
 
-.PHONY: help ref tables check doctests test results figures paper render cost web web-check web-presets web-fuzz web-serve clean
+.PHONY: help ref tables check doctests test results figures paper render cost web web-check web-presets web-fuzz web-atlas web-serve clean
 help:
 	@sed -n '1,/^$$/p' Makefile | sed 's/^# \{0,1\}//'
 
@@ -126,7 +129,12 @@ web-presets: web
 web-fuzz: web
 	node scripts/fuzz_web.mjs 2000 1
 
-web-serve: web
+web-atlas: web/atlas.json
+
+web/atlas.json: $(WEB_DSP)/voice.wasm $(WEB_DSP)/body.wasm web/controls.js scripts/gen_atlas.mjs
+	node scripts/gen_atlas.mjs 2000 1
+
+web-serve: web web/atlas.json
 	$(PYTHON) scripts/web_serve.py $(PORT)
 
 clean:
