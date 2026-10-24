@@ -1,0 +1,20 @@
+# The space control: raw excitation, spread, reverb, frozen reverb.
+length 192000
+0 note 57
+0 space 0.0
+0 gate 1
+16000 gate 0
+32000 space 0.07
+32000 gate 1
+48000 gate 0
+64000 space 0.4
+64000 gate 1
+80000 gate 0
+96000 space 1.2
+96000 diffusion 0.7
+96000 reverb_lp 0.85
+96000 gate 1
+112000 gate 0
+128000 space 1.9
+128000 gate 1
+136000 gate 0

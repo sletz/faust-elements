@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Elements in Faust</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <div class="title">
+    <h1 data-text="title">Mutable Instruments Elements in Faust</h1>
+    <p data-text="subtitle"></p>
+    <p id="build" class="build"></p>
+  </div>
+  <div class="lang">
+    <button type="button" data-lang="en">EN</button>
+    <button type="button" data-lang="fr">FR</button>
+  </div>
+</header>
+
+<main>
+  <section class="transport">
+    <button type="button" id="start" class="primary" data-text="start">Start audio</button>
+    <span id="status" class="status"></span>
+    <button type="button" id="panic" data-text="panic" disabled>All notes off</button>
+    <div class="meters">
+      <div class="meter"><span data-text="load"></span><div class="bar"><div id="load-bar"></div></div><span id="load-value" class="value">–</span></div>
+      <div class="meter"><span data-text="level"></span><div class="bar"><div id="level-bar"></div></div><span id="level-value" class="value">–</span></div>
+      <div class="meter"><span data-text="voices"></span><span id="voices-value" class="value">–</span></div>
+    </div>
+  </section>
+
+  <section class="play">
+    <div class="options">
+      <label><span data-text="preset"></span> <select id="preset"></select></label>
+      <label><span data-text="polyphony"></span>
+        <select id="polyphony"><option>1</option><option>2</option><option selected>4</option><option>6</option><option>8</option></select>
+      </label>
+      <label><span data-text="midi"></span> <select id="midi-input"></select></label>
+      <label><span data-text="velocity"></span>
+        <input type="range" id="velocity" min="1" max="127" value="64">
+        <span id="velocity-value" class="value">64</span>
+      </label>
+      <span class="octave"><span data-text="octave"></span>
+        <button type="button" id="octave-down">←</button><span id="octave-value" class="value"></span><button type="button" id="octave-up">→</button>
+      </span>
+    </div>
+    <p id="preset-help" class="help"></p>
+    <div id="keyboard" class="keyboard"></div>
+    <p class="help" data-text="keysHelp"></p>
+  </section>
+
+  <section id="controls" class="controls"></section>
+</main>
+<script type="module" src="app.js"></script>
+</body>
+</html>

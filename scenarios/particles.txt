@@ -1,0 +1,14 @@
+# Strike exciter, PARTICLES (mallet 0.8 .. 1): random bounces, three gates.
+length 128000
+0 mallet 0.9
+0 strike 0.8
+0 geometry 0.6
+0 note 60
+0 gate 1
+32000 gate 0
+40000 mallet 0.98
+40000 gate 1
+80000 gate 0
+96000 mallet 0.82
+96000 strike_timbre 0.9
+96000 gate 1

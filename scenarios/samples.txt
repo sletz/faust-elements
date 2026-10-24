@@ -1,0 +1,17 @@
+# Strike exciter, SAMPLE_PLAYER (mallet below 0.4): two notes, timbre and sample changes.
+length 128000
+0 strike 0.7
+0 mallet 0.1
+0 note 52
+0 gate 1
+24000 gate 0
+32000 mallet 0.33
+32000 strike_timbre 0.8
+32000 note 64
+32000 gate 1
+40000 gate 0
+64000 mallet 0.0
+64000 strike 1.0
+64000 note 45
+64000 gate 1
+96000 gate 0

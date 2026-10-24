@@ -1,0 +1,22 @@
+# Parameters moving within a note, strength, modulation and the model switched
+# under a held note (the frozen resonator resumes).
+length 160000
+0 note 60
+0 strike 0.95
+0 gate 1
+8000 geometry 0.5
+16000 brightness 0.2
+24000 damping 0.8
+32000 strength 0.9
+40000 modulation 7.3
+48000 position 0.95
+56000 gate 0
+64000 gate 1
+72000 model 1
+88000 model 2
+104000 model 0
+112000 strength 0.1
+120000 gate 0
+128000 mod_offset 0.5
+128000 mod_frequency 1.5
+128000 gate 1

@@ -1,0 +1,7 @@
+# machine: Apple M5, Darwin 25.6.0
+# faust-rs: faustprobe 0.9.2, commit 172305ea
+# C++: Apple clang version 21.0.0 (clang-2100.3.34.2)
+# 100 s at 32 kHz (3.2 M frames), gate held, bow 0.5; ms of compute per second of audio
+model 0 (modal): C++ 3.4 ms/s, Faust native 10.71 ms/s, Faust faustprobe (10 s) 17.1 ms/s
+model 1 (string): C++ 1.5 ms/s, Faust native 2.80 ms/s, Faust faustprobe (10 s) 6.65 ms/s
+model 2 (strings): C++ 3.9 ms/s, Faust native 4.89 ms/s, Faust faustprobe (10 s) 13.7 ms/s

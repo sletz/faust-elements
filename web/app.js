@@ -1,0 +1,369 @@
+// The page: starts the AudioWorklet at 32 kHz with the voice and the body
+// compiled by faust-rs (web/dsp), builds the controls and the presets, and plays
+// notes from the on-screen keyboard, the computer keyboard and Web MIDI.
+import { CONTROLS, GROUPS, PRESETS } from "./controls.js";
+import { controlKey, uiItems } from "./faust-wasm-dsp.js";
+
+const DSP_DIR = "dsp/";
+// The module's sample rate: every table and delay of the model is computed for it.
+const SAMPLE_RATE = 32000;
+
+const TEXT = {
+  en: {
+    title: "Mutable Instruments Elements in Faust",
+    subtitle: "The modal synthesis voice of Emilie Gillet, written in Faust and compiled to WebAssembly by faust-rs. Bow, blow or strike a resonator of 52 modes, one string or a chord of strings, in the module's reverb.",
+    start: "Start audio", stop: "Stop audio", panic: "All notes off",
+    loading: "Loading…", running: "Running at 32 kHz", stopped: "Stopped",
+    load: "Load", voices: "Voices", level: "Level",
+    preset: "Preset", polyphony: "Polyphony", midi: "MIDI input", velocity: "Velocity",
+    octave: "Octave", allInputs: "All inputs", noMidi: "No Web MIDI",
+    keysHelp: "Computer keyboard: two rows from Z and Q, ← → change the octave. Double-click a control to reset it.",
+    reset: "reset",
+  },
+  fr: {
+    title: "Mutable Instruments Elements en Faust",
+    subtitle: "La voix de synthèse modale d'Émilie Gillet, écrite en Faust et compilée en WebAssembly par faust-rs. Frottez, soufflez ou frappez un résonateur de 52 modes, une corde ou un accord de cordes, dans la réverbération du module.",
+    start: "Démarrer l'audio", stop: "Arrêter l'audio", panic: "Tout couper",
+    loading: "Chargement…", running: "En marche à 32 kHz", stopped: "Arrêté",
+    load: "Charge", voices: "Voix", level: "Niveau",
+    preset: "Préréglage", polyphony: "Polyphonie", midi: "Entrée MIDI", velocity: "Vélocité",
+    octave: "Octave", allInputs: "Toutes les entrées", noMidi: "Pas de Web MIDI",
+    keysHelp: "Clavier d'ordinateur : deux rangées depuis Z et Q (W et A en AZERTY), ← → changent l'octave. Double-cliquez une commande pour la remettre à zéro.",
+    reset: "défaut",
+  },
+};
+
+let lang = (navigator.language || "en").startsWith("fr") ? "fr" : "en";
+const t = (k) => TEXT[lang][k];
+const $ = (id) => document.getElementById(id);
+
+// The audio state: the context, the worklet node, the DSPs' JSON.
+const audio = { ctx: null, node: null, json: null, starting: false };
+// Control values by key, and their ranges from the JSON.
+const values = new Map();
+const ranges = new Map();
+let octave = 4;
+const held = new Set();
+
+function send(message) {
+  if (audio.node) audio.node.port.postMessage(message);
+}
+
+function setControl(key, value) {
+  values.set(key, value);
+  send({ type: "control", key, value });
+  const row = document.querySelector(`[data-key="${key}"]`);
+  if (row) {
+    row.querySelector("input").value = value;
+    row.querySelector(".value").textContent = format(key, value);
+  }
+}
+
+function format(key, v) {
+  const r = ranges.get(key);
+  return r && r.step >= 1 ? String(Math.round(v)) : Number(v).toFixed(3);
+}
+
+async function loadDsp(name) {
+  const [json, module] = await Promise.all([
+    fetch(DSP_DIR + name + ".json").then((r) => r.json()),
+    fetch(DSP_DIR + name + ".wasm").then(async (r) => WebAssembly.compile(await r.arrayBuffer())),
+  ]);
+  return { json, module };
+}
+
+async function start() {
+  if (audio.ctx) {
+    if (audio.ctx.state === "running") {
+      await audio.ctx.suspend();
+      $("status").textContent = t("stopped");
+      $("start").textContent = t("start");
+    } else {
+      await audio.ctx.resume();
+      $("status").textContent = t("running");
+      $("start").textContent = t("stop");
+    }
+    return;
+  }
+  if (audio.starting) return;
+  audio.starting = true;
+  $("status").textContent = t("loading");
+  const ctx = new AudioContext({ sampleRate: SAMPLE_RATE, latencyHint: "interactive" });
+  // Safari runs a context only if `resume` is called during the user's gesture.
+  ctx.resume().catch(() => {});
+  try {
+    await ctx.audioWorklet.addModule("elements-processor.js");
+    const [voice, body] = await Promise.all([loadDsp("voice"), loadDsp("body")]);
+    audio.json = { voice: voice.json, body: body.json };
+    const node = new AudioWorkletNode(ctx, "elements", {
+      numberOfInputs: 0,
+      numberOfOutputs: 1,
+      outputChannelCount: [2],
+      processorOptions: { voice, body, polyphony: Number($("polyphony").value) },
+    });
+    node.port.onmessage = (e) => onMessage(e.data);
+    node.connect(ctx.destination);
+    audio.ctx = ctx;
+    audio.node = node;
+    readRanges();
+    buildControls();
+    applyPreset($("preset").value);
+    $("status").textContent = t("running");
+    $("start").textContent = t("stop");
+    $("panic").disabled = false;
+    $("build").textContent = buildLine();
+  } catch (err) {
+    $("status").textContent = String(err);
+    await ctx.close();
+  } finally {
+    audio.starting = false;
+  }
+}
+
+function buildLine() {
+  const j = audio.json.voice;
+  return `faust-rs ${j.version || ""}, ${j.compile_options || ""}`;
+}
+
+function onMessage(m) {
+  if (m.type === "stats") {
+    const load = Math.min(1, m.load);
+    $("load-bar").style.width = `${(load * 100).toFixed(0)}%`;
+    $("load-value").textContent = `${(m.load * 100).toFixed(0)} %`;
+    $("voices-value").textContent = String(m.active);
+    const db = m.peak > 0 ? 20 * Math.log10(m.peak) : -Infinity;
+    $("level-bar").style.width = `${Math.max(0, Math.min(100, (db + 60) / 60 * 100))}%`;
+    $("level-value").textContent = Number.isFinite(db) ? `${db.toFixed(0)} dB` : "–";
+  }
+}
+
+// The ranges and defaults of every control, from the voice's and the body's JSON.
+function readRanges() {
+  for (const j of [audio.json.voice, audio.json.body]) {
+    for (const item of uiItems(j.ui)) {
+      if (item.min === undefined) continue;
+      ranges.set(controlKey(item.address), {
+        min: Number(item.min), max: Number(item.max), step: Number(item.step), init: Number(item.init),
+      });
+    }
+  }
+  for (const [k, r] of ranges) if (!values.has(k)) values.set(k, r.init);
+}
+
+function buildControls() {
+  const root = $("controls");
+  root.innerHTML = "";
+  for (const g of GROUPS) {
+    const items = CONTROLS.filter((c) => c.group === g.id && ranges.has(c.key));
+    if (!items.length) continue;
+    const box = document.createElement("fieldset");
+    const legend = document.createElement("legend");
+    legend.textContent = g[lang];
+    box.appendChild(legend);
+    for (const c of items) {
+      const r = ranges.get(c.key);
+      const row = document.createElement("div");
+      row.className = "control";
+      row.dataset.key = c.key;
+      const [label, help] = c[lang];
+      row.innerHTML = `<label><span class="name"></span>
+        <input type="range" min="${r.min}" max="${r.max}" step="${r.step >= 1 ? 1 : 0.001}">
+        <span class="value"></span></label><p class="help"></p>`;
+      row.querySelector(".name").textContent = label;
+      row.querySelector(".help").textContent = help;
+      const input = row.querySelector("input");
+      input.value = values.get(c.key);
+      row.querySelector(".value").textContent = format(c.key, values.get(c.key));
+      input.addEventListener("input", () => {
+        setControl(c.key, Number(input.value));
+        markPresetModified();
+      });
+      input.addEventListener("dblclick", () => setControl(c.key, r.init));
+      box.appendChild(row);
+    }
+    root.appendChild(box);
+  }
+}
+
+function buildPresets() {
+  const sel = $("preset");
+  sel.innerHTML = "";
+  for (const p of PRESETS) {
+    const o = document.createElement("option");
+    o.value = p.id;
+    o.textContent = p[lang][0];
+    sel.appendChild(o);
+  }
+  showPresetHelp();
+}
+
+function showPresetHelp() {
+  const p = PRESETS.find((x) => x.id === $("preset").value) || PRESETS[0];
+  $("preset-help").textContent = p[lang][1];
+}
+
+function applyPreset(id) {
+  const p = PRESETS.find((x) => x.id === id);
+  if (!p) return;
+  for (const [k, r] of ranges) setControl(k, k in p.values ? p.values[k] : r.init);
+  showPresetHelp();
+}
+
+function markPresetModified() {
+  $("preset-help").textContent = PRESETS.find((x) => x.id === $("preset").value)[lang][1] + " *";
+}
+
+// Notes.
+function noteOn(key, velocity) {
+  if (audio.ctx && audio.ctx.state !== "running") audio.ctx.resume().catch(() => {});
+  send({ type: "noteOn", key, velocity });
+  held.add(key);
+  const el = document.querySelector(`.key[data-key="${key}"]`);
+  if (el) el.classList.add("down");
+}
+
+function noteOff(key) {
+  send({ type: "noteOff", key });
+  held.delete(key);
+  const el = document.querySelector(`.key[data-key="${key}"]`);
+  if (el) el.classList.remove("down");
+}
+
+function buildKeyboard() {
+  const kb = $("keyboard");
+  kb.innerHTML = "";
+  const first = 12 * (octave + 1);
+  const black = [1, 3, 6, 8, 10];
+  for (let k = first; k < first + 37; k += 1) {
+    const d = document.createElement("div");
+    d.className = "key" + (black.includes(k % 12) ? " black" : "");
+    d.dataset.key = k;
+    const play = (e) => {
+      e.preventDefault();
+      d.setPointerCapture?.(e.pointerId);
+      // Lower on the key is louder.
+      const rect = d.getBoundingClientRect();
+      const y = Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height));
+      noteOn(k, 0.2 + 0.8 * y);
+    };
+    d.addEventListener("pointerdown", play);
+    d.addEventListener("pointerup", () => noteOff(k));
+    d.addEventListener("pointercancel", () => noteOff(k));
+    kb.appendChild(d);
+  }
+  $("octave-value").textContent = String(octave);
+}
+
+// Two rows of the computer keyboard, by physical key, whatever the layout.
+const ROW_LOW = ["KeyZ", "KeyS", "KeyX", "KeyD", "KeyC", "KeyV", "KeyG", "KeyB", "KeyH", "KeyN", "KeyJ", "KeyM", "Comma"];
+const ROW_HIGH = ["KeyQ", "Digit2", "KeyW", "Digit3", "KeyE", "KeyR", "Digit5", "KeyT", "Digit6", "KeyY", "Digit7", "KeyU", "KeyI"];
+const pressed = new Map();
+
+function keyToNote(code) {
+  let i = ROW_LOW.indexOf(code);
+  if (i >= 0) return 12 * (octave + 1) + i;
+  i = ROW_HIGH.indexOf(code);
+  if (i >= 0) return 12 * (octave + 2) + i;
+  return -1;
+}
+
+function onKeyDown(e) {
+  if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT" || e.repeat) return;
+  if (e.code === "ArrowLeft" || e.code === "ArrowRight") {
+    octave = Math.max(0, Math.min(7, octave + (e.code === "ArrowLeft" ? -1 : 1)));
+    buildKeyboard();
+    return;
+  }
+  const n = keyToNote(e.code);
+  if (n >= 0 && !pressed.has(e.code)) {
+    pressed.set(e.code, n);
+    noteOn(n, Number($("velocity").value) / 127);
+  }
+}
+
+function onKeyUp(e) {
+  const n = pressed.get(e.code);
+  if (n !== undefined) {
+    pressed.delete(e.code);
+    noteOff(n);
+  }
+}
+
+// Web MIDI: notes, velocity, pitch bend on the modulation (±2 semitones), all
+// notes off.
+async function setupMidi() {
+  const sel = $("midi-input");
+  if (!navigator.requestMIDIAccess) {
+    sel.innerHTML = `<option>${t("noMidi")}</option>`;
+    return;
+  }
+  try {
+    const access = await navigator.requestMIDIAccess();
+    const refresh = () => {
+      const current = sel.value;
+      sel.innerHTML = `<option value="all">${t("allInputs")}</option>`;
+      for (const input of access.inputs.values()) {
+        const o = document.createElement("option");
+        o.value = input.id;
+        o.textContent = input.name;
+        sel.appendChild(o);
+      }
+      if ([...sel.options].some((o) => o.value === current)) sel.value = current;
+      for (const input of access.inputs.values()) {
+        input.onmidimessage = (m) => {
+          if (sel.value !== "all" && sel.value !== input.id) return;
+          midi(m.data);
+        };
+      }
+    };
+    access.onstatechange = refresh;
+    refresh();
+  } catch {
+    sel.innerHTML = `<option>${t("noMidi")}</option>`;
+  }
+}
+
+function midi([status, a, b]) {
+  const type = status & 0xf0;
+  if (type === 0x90 && b > 0) noteOn(a, b / 127);
+  else if (type === 0x80 || (type === 0x90 && b === 0)) noteOff(a);
+  else if (type === 0xe0) setControl("performance/modulation", ((b * 128 + a) - 8192) / 8192 * 2);
+  else if (type === 0xb0 && (a === 120 || a === 123)) panic();
+}
+
+function panic() {
+  for (const k of [...held]) noteOff(k);
+  send({ type: "panic" });
+}
+
+function applyLanguage() {
+  document.documentElement.lang = lang;
+  for (const el of document.querySelectorAll("[data-text]")) el.textContent = t(el.dataset.text);
+  $("start").textContent = audio.ctx && audio.ctx.state === "running" ? t("stop") : t("start");
+  buildPresets();
+  if (audio.json) buildControls();
+  for (const b of document.querySelectorAll("[data-lang]")) b.classList.toggle("on", b.dataset.lang === lang);
+}
+
+function init() {
+  for (const b of document.querySelectorAll("[data-lang]")) {
+    b.addEventListener("click", () => {
+      lang = b.dataset.lang;
+      applyLanguage();
+    });
+  }
+  $("start").addEventListener("click", start);
+  $("panic").addEventListener("click", panic);
+  $("preset").addEventListener("change", () => applyPreset($("preset").value));
+  $("polyphony").addEventListener("change", () => send({ type: "polyphony", count: Number($("polyphony").value) }));
+  $("velocity").addEventListener("input", () => { $("velocity-value").textContent = $("velocity").value; });
+  $("octave-down").addEventListener("click", () => { octave = Math.max(0, octave - 1); buildKeyboard(); });
+  $("octave-up").addEventListener("click", () => { octave = Math.min(7, octave + 1); buildKeyboard(); });
+  window.addEventListener("keydown", onKeyDown);
+  window.addEventListener("keyup", onKeyUp);
+  applyLanguage();
+  buildKeyboard();
+  setupMidi();
+}
+
+init();

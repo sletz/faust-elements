@@ -1,0 +1,5 @@
+# The strike input: an external signal (a noise burst) into the resonator, no gate.
+length 64000
+0 strike 0.0
+0 note 48
+0 strike_in scenarios/burst.f32

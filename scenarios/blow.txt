@@ -1,0 +1,17 @@
+# Blow exciter: the granular noise, then the reed tube (blow above 2/3).
+length 128000
+0 strike 0.0
+0 blow 0.6
+0 flow 0.3
+0 envelope 0.7
+0 note 57
+0 gate 1
+32000 flow 0.8
+32000 blow_timbre 0.2
+48000 gate 0
+64000 blow 0.95
+64000 envelope 0.55
+64000 note 50
+64000 gate 1
+96000 blow_timbre 0.9
+112000 gate 0

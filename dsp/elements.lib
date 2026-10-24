@@ -1,0 +1,1408 @@
+//################################ elements.lib ##########################################
+// elements library. Its official prefix is `el`.
+//
+// A Faust model of Mutable Instruments Elements, the modal synthesis voice of Emilie
+// Gillet (eurorack/elements/dsp, C++, MIT license): three exciters (a bow, a blow
+// made of a granular noise player and a reed tube, a strike made of mallet samples,
+// a mallet, a plectrum and bouncing particles), an envelope, a resonator of 52
+// zero-delay-feedback band-pass modes with 8 bowed waveguides, or one string or a
+// chord of five strings with dispersion, and the stereo reverb of the module.
+//
+// The C++ runs at 32 kHz in blocks of 16 samples, and the model is written to give
+// the same samples:
+//
+// * everything the C++ computes once per block (the gate flags, the envelope, the
+//   strike exciter, the modes' coefficients, the strings' parameters) is computed in
+//   faust-rs `ondemand` domains clocked by the first sample of a block, from the
+//   controls read at that sample, and the per-sample ramps accumulate as the C++
+//   accumulates them;
+// * one random generator, `stmlib::Random`, is shared by the bow, the blow, the
+//   particles and the strings, which draw from it in that order within a block. The
+//   model keeps the generator's state at the block start and gives each consumer the
+//   word it would draw, by the generator's k-step jump (`lcg_a`, `lcg_c`);
+// * what the C++ does not process (the modal resonator in string mode, a bowed mode
+//   or a string not in use, the string's tick when it runs slower than the sample
+//   rate) is in an `ondemand` domain that does not fire, so its state and its delay
+//   lines stand still as the C++'s do;
+// * the reverb stores its delay lines in 16 bits, as the module does.
+//
+// The lookup tables and the samples come from the C++ itself, through
+// `elements_tables.lib` (`scripts/gen_tables.py`). The library needs faust-rs; the
+// comparisons with the C++ are in double precision.
+//
+// The elements library is organized into 11 sections:
+//
+// * [Sizes and clock](#sizes-and-clock)
+// * [Helpers](#helpers)
+// * [Filters](#filters)
+// * [Panel](#panel)
+// * [Envelope](#envelope)
+// * [Random generator](#random-generator)
+// * [Exciters](#exciters)
+// * [Modal resonator](#modal-resonator)
+// * [Strings](#strings)
+// * [Voice](#voice)
+// * [Part and reverb](#part-and-reverb)
+//
+// It should be used using the `el` environment, with `elements_tables.lib` in the
+// import path, at a sample rate of 32 kHz:
+//
+// ```
+// el = library("elements.lib");
+// process = el.module;
+// ```
+//
+// #### References
+//
+// * Mutable Instruments Elements: `elements/dsp/*.cc`, `stmlib/dsp`
+//   (Emilie Gillet, 2014, MIT), https://github.com/pichenettes/eurorack
+// * faust-elements: `README.md`, `results/`
+//########################################################################################
+
+declare name "elements";
+declare version "0.1.0";
+declare author "Stéphane Letz";
+declare copyright "Faust model: GRAME, 2026; Elements C++: Emilie Gillet, 2014";
+declare license "MIT";
+
+ba = library("basics.lib");
+ma = library("maths.lib");
+si = library("signals.lib");
+tb = library("elements_tables.lib");
+
+//==================================== Sizes and clock ===================================
+// The C++ engine's constants, and the clock of its blocks.
+//========================================================================================
+
+//--------------------------------------`(el.)SR`---------------------------------------
+// Sample rate of the model, 32 kHz, the rate of the module's codec. Every table, delay
+// and coefficient of the C++ is computed for it: run the model at this rate.
+//
+// #### Usage
+//
+// ```
+// SR : _
+// ```
+//
+// #### Test
+// ```
+// el = library("elements.lib");
+// SR_test = el.SR;
+// ```
+//----------------------------------------------------------------------------------------
+declare SR license "MIT";
+SR = 32000.0;
+
+//--------------------------------------`(el.)BS`---------------------------------------
+// Block size of the C++ engine (`kMaxBlockSize`, the codec's chunk): the controls are
+// read and the block-rate quantities computed every BS samples.
+//
+// #### Usage
+//
+// ```
+// BS : _
+// ```
+//
+// #### Test
+// ```
+// el = library("elements.lib");
+// BS_test = el.BS;
+// ```
+//----------------------------------------------------------------------------------------
+declare BS license "MIT";
+BS = 16;
+
+// Modes of the resonator (`set_resolution(52)`), bowed modes, strings of a chord.
+NM = 52;
+NB = 8;
+NSTR = 5;
+
+//-------------------------------------`(el.)bpos`--------------------------------------
+// Position of the current sample in its block, 0 .. BS-1, counted from the first
+// sample the program computes (the C++'s first block).
+//
+// #### Usage
+//
+// ```
+// bpos : _
+// ```
+//
+// #### Test
+// ```
+// el = library("elements.lib");
+// bpos_test = el.bpos;
+// ```
+//----------------------------------------------------------------------------------------
+declare bpos license "MIT";
+bpos = ba.time % BS;
+
+//--------------------------------------`(el.)blk`--------------------------------------
+// 1 on the first sample of a block, the clock of every block-rate domain.
+//
+// #### Usage
+//
+// ```
+// blk : _
+// ```
+//
+// #### Test
+// ```
+// el = library("elements.lib");
+// blk_test = el.blk;
+// ```
+//----------------------------------------------------------------------------------------
+declare blk license "MIT";
+blk = bpos == 0;
+
+
+//======================================== Helpers =======================================
+// Small functions shared by the sections below.
+//========================================================================================
+
+// `c ? a : b`.
+_if(c, a, b) = select2(c, b, a);
+_clip(lo, hi, x) = max(lo, min(hi, x));
+// 1 on the first sample, or the first firing of the domain it is used in.
+_start = 1 - 1';
+// The previous value of a state whose initial value is x0, from the value fed back by
+// a recursion (which starts at 0).
+_init(x0, prev) = _if(_start, x0, prev);
+
+// Unsigned 32-bit comparisons and conversions on Faust's signed integers.
+_S31 = 1 << 31;
+_ult(a, b) = (a xor _S31) < (b xor _S31);
+_ugt(a, b) = _ult(b, a);
+_ushr(x, k) = (x >> k) & ((1 << (32 - k)) - 1);
+_u2f(x) = float(x) + (x < 0) * 4294967296.0;
+
+//-------------------------------------`(el.)s2r`---------------------------------------
+// `stmlib::SemitonesToRatio`: a ratio of `st` semitones from two tables, the
+// semitone in 1/256 truncated, as the C++ computes it.
+//
+// #### Usage
+//
+// ```
+// s2r(st) : _
+// ```
+//
+// Where:
+//
+// * `st`: semitones, -127 .. 127
+//
+// #### Test
+// ```
+// el = library("elements.lib");
+// s2r_test = el.s2r(12.0);
+// ```
+//----------------------------------------------------------------------------------------
+declare s2r license "MIT";
+s2r(st) = tb.lut_pitch_ratio_high(pi) * tb.lut_pitch_ratio_low(int(pf * 256.0))
+with {
+    p = st + 128.0;
+    pi = int(p);
+    pf = p - float(pi);
+};
+
+// `stmlib::Interpolate`: linear interpolation of table t at x * n.
+_interp(t, x, n) = a + (b - a) * f
+with {
+    i = x * n;
+    ii = int(i);
+    f = i - float(ii);
+    a = t(ii);
+    b = t(ii + 1);
+};
+
+//-----------------------------------`(el.)note2f`--------------------------------------
+// The frequency of a MIDI pitch, in cycles per sample at 32 kHz (`Part::Process`):
+// the pitch + 48 in 1/256 of a semitone, clamped to 0 .. 65535, through
+// `lut_midi_to_f_high` and `lut_midi_to_f_low` (12 kHz at most).
+//
+// #### Usage
+//
+// ```
+// note2f(midi) : _
+// ```
+//
+// Where:
+//
+// * `midi`: MIDI pitch, fractional
+//
+// #### Test
+// ```
+// el = library("elements.lib");
+// note2f_test = el.note2f(69.0) * el.SR;
+// ```
+//----------------------------------------------------------------------------------------
+declare note2f license "MIT";
+note2f(midi) = tb.lut_midi_to_f_high(p >> 8) * tb.lut_midi_to_f_low(p & 255)
+with {
+    p = _clip(0, 65535, int((midi + 48.0) * 256.0));
+};
+
+//-------------------------------------`(el.)soft_limit`--------------------------------
+// `stmlib::SoftLimit`, the module's clipper: `x (27 + x^2) / (27 + 9 x^2)`.
+//
+// #### Usage
+//
+// ```
+// _ : soft_limit : _
+// ```
+//
+// #### Test
+// ```
+// el = library("elements.lib");
+// soft_limit_test = os.osc(440) * 2 : el.soft_limit;
+// ```
+//----------------------------------------------------------------------------------------
+declare soft_limit license "MIT";
+soft_limit(x) = x * (27.0 + x * x) / (27.0 + 9.0 * x * x);
+
+//======================================== Filters =======================================
+// `stmlib::Svf` (the zero-delay-feedback state-variable filter of the modes, the
+// exciters and the strings), its frequency approximations, and the delay-line reads.
+//========================================================================================
+
+// tan(pi f), as `OnePole::tan` approximates it (the constants are the C++'s floats).
+_PI_F = 3.1415927410125732;
+_tan_dirty(f) = f * (_PI_F + 11.583945274353027 * f * f);
+_tan_fast(f) = f * (_PI_F + f2 * (10.108046531677246 + 55.78738784790039 * f2))
+with { f2 = f * f; };
+_tan_accurate(f) = f * (_PI_F + f2 * (10.335366249084473 + f2 * (40.82069778442383
+    + f2 * (161.20530700683594 + f2 * (86.4620361328125 + f2 * 2799.883544921875)))))
+with { f2 = f * f; };
+
+// `set_g_q` / `set_f_q`: the damping r and the normalisation h of a filter.
+_svf_r(resonance) = 1.0 / resonance;
+_svf_h(g, r) = 1.0 / (1.0 + r * g + g * g);
+
+// One step of `Svf::Process`: the next states and the low-pass and band-pass outputs.
+_svf_step(g, r, h, x, s1, s2) = s1n, s2n, lp, bp
+with {
+    hp = (x - r * s1 - g * s1 - s2) * h;
+    bp = g * hp + s1;
+    s1n = g * hp + bp;
+    lp = g * bp + s2;
+    s2n = g * bp + lp;
+};
+
+//-------------------------------------`(el.)svf_lp`------------------------------------
+// Low-pass output of `stmlib::Svf` with coefficients g, r, h.
+//
+// #### Usage
+//
+// ```
+// _ : svf_lp(g, r, h) : _
+// ```
+//
+// #### Test
+// ```
+// el = library("elements.lib");
+// svf_lp_test = os.osc(440) : el.svf_lp(0.1, 2.0, 1.0 / (1.0 + 2.0 * 0.1 + 0.01));
+// ```
+//----------------------------------------------------------------------------------------
+declare svf_lp license "MIT";
+svf_lp(g, r, h, x) = (\(s1, s2).(_svf_step(g, r, h, x, s1, s2))) ~ (_, _) : !, !, _, !;
+
+// The same, its state frozen while `on` is 0 (a filter the C++ does not process).
+_svf_lp_on(on, g, r, h, x) = (\(s1, s2).(_svf_step(g, r, h, x, s1, s2)
+    : \(a, b, l, p).(_if(on, a, s1), _if(on, b, s2), l, p))) ~ (_, _) : !, !, _, !;
+_svf_bp_on(on, g, r, h, x) = (\(s1, s2).(_svf_step(g, r, h, x, s1, s2)
+    : \(a, b, l, p).(_if(on, a, s1), _if(on, b, s2), l, p))) ~ (_, _) : !, !, !, _;
+_svf_bp(g, r, h, x) = (\(s1, s2).(_svf_step(g, r, h, x, s1, s2))) ~ (_, _) : !, !, !, _;
+
+// A ring buffer of N cells read before its write at offset k (`DelayLine::Read`): the
+// value written k writes ago, N ago when k is a multiple of N. `wprev` is the value
+// written one write ago (what a recursion feeds back).
+_ring(N, wprev, k) = wprev @ _clip(0, N - 1, (k - 1 + N) % N);
+
+// `stmlib::DelayLine::ReadHermite`, before the write.
+_hermite(N, wprev, delay) = (((a * f) - bneg) * f + c) * f + x0
+with {
+    di = int(delay);
+    f = delay - float(di);
+    xm1 = _ring(N, wprev, di - 1);
+    x0 = _ring(N, wprev, di);
+    x1 = _ring(N, wprev, di + 1);
+    x2 = _ring(N, wprev, di + 2);
+    c = (x1 - xm1) * 0.5;
+    v = x0 - x1;
+    w = c + v;
+    a = w + v + (x2 - x0) * 0.5;
+    bneg = w + a;
+};
+
+//========================================= Panel ========================================
+// The controls of the module, under the names of the `Patch` and `PerformanceState`
+// fields. The ranges are those `CvScaler` gives the C++ (`elements/cv_scaler.cc`);
+// the unit's signature (`Part::Seed`, the serial number) is in its own group, at the
+// values of `Part::Init`.
+//========================================================================================
+
+_exc(x) = hgroup("[1]exciter", x);
+_res(x) = hgroup("[2]resonator", x);
+_spc(x) = hgroup("[3]space", x);
+_unit(x) = hgroup("[4]unit", x);
+_perf(x) = hgroup("[0]performance", x);
+
+envelope = _exc(vslider("[0]envelope[tooltip: contour: percussive, AD, ADSR, AR]", 1.0, 0, 1, 0.001));
+bow = _exc(vslider("[1]bow[tooltip: bow level]", 0.0, 0, 1, 0.001));
+blow = _exc(vslider("[2]blow[tooltip: blow level; above 2/3 the reed tube]", 0.0, 0, 1, 0.001));
+strike = _exc(vslider("[3]strike[tooltip: strike level; above 0.8 the mallet bleeds]", 0.8, 0, 1, 0.001));
+bow_timbre = _exc(vslider("[4]bow_timbre", 0.5, 0, 0.9995, 0.001));
+flow = _exc(vslider("[5]flow[tooltip: blow meta: granular restart point]", 0.5, 0, 0.9995, 0.001));
+blow_timbre = _exc(vslider("[6]blow_timbre", 0.5, 0, 0.9995, 0.001));
+mallet = _exc(vslider("[7]mallet[tooltip: strike meta: samples, mallet, plectrum, particles]", 0.5, 0, 0.9995, 0.001));
+strike_timbre = _exc(vslider("[8]strike_timbre", 0.5, 0, 0.995, 0.001));
+geometry = _res(vslider("[0]geometry", 0.2, 0, 0.9995, 0.001));
+brightness = _res(vslider("[1]brightness", 0.5, 0, 0.9995, 0.001));
+damping = _res(vslider("[2]damping", 0.25, 0, 0.9995, 0.001));
+position = _res(vslider("[3]position", 0.3, 0, 0.9995, 0.001));
+model = _res(nentry("[4]model[tooltip: 0 modal, 1 string, 2 strings]", 0, 0, 2, 1));
+space = _spc(vslider("[0]space[tooltip: stereo, then reverb; frozen above 1.75]", 0.5, 0, 2, 0.001));
+signature = _unit(vslider("[0]signature", 0.0, 0, 0.99, 0.001));
+mod_frequency = _unit(vslider("[1]mod_frequency[unit:Hz]", 0.5, 0, 2, 0.001));
+mod_offset = _unit(vslider("[2]mod_offset", 0.1, 0, 1, 0.001));
+diffusion = _unit(vslider("[3]diffusion", 0.625, 0, 0.9, 0.001));
+reverb_lp = _unit(vslider("[4]reverb_lp", 0.7, 0, 1, 0.001));
+note = _perf(hslider("[0]note", 69, -48, 160, 0.001));
+strength = _perf(hslider("[1]strength", 0.5, 0, 1, 0.001));
+modulation = _perf(hslider("[2]modulation", 0, -60, 60, 0.001));
+gate = _perf(button("[3]gate"));
+
+//======================================== Envelope ======================================
+// `MultistageEnvelope` in its ADSR form, computed once per block, and the gate flags.
+//========================================================================================
+
+//------------------------------------`(el.)gate_flags`---------------------------------
+// The gate flags of a block (`Voice::GetGateFlags`), from the gate read at its first
+// sample: rising edge, falling edge, gate. Run once per block.
+//
+// #### Usage
+//
+// ```
+// (blk, g) : ondemand(gate_flags) : _, _, _
+// ```
+//
+// #### Test
+// ```
+// el = library("elements.lib");
+// gate_flags_test = (el.blk, button("gate")) : ondemand(el.gate_flags);
+// ```
+//----------------------------------------------------------------------------------------
+declare gate_flags license "MIT";
+gate_flags(g) = rise, fall, gb
+with {
+    gb = g != 0;
+    rise = gb & (gb' == 0);
+    fall = (gb == 0) & (gb' != 0);
+};
+
+//-------------------------------------`(el.)envelope_block`----------------------------
+// One block of the exciter envelope (`Voice::Process`): the contour `shape` chooses
+// the ADSR and a gain (a percussive contour is up to 5 times louder), and
+// `MultistageEnvelope::Process` advances one segment phase step. The value of the
+// block, gain included; to be run once per block.
+//
+// #### Usage
+//
+// ```
+// (blk, rise, fall, gate, shape) : ondemand(envelope_block) : _
+// ```
+//
+// #### Test
+// ```
+// el = library("elements.lib");
+// envelope_block_test = (el.blk, ((el.blk, button("gate")) : ondemand(el.gate_flags)), 1.0)
+//     : ondemand(el.envelope_block);
+// ```
+//----------------------------------------------------------------------------------------
+declare envelope_block license "MIT";
+envelope_block(rise, fall, g, shape) = loop ~ (_, _, _, _) : !, !, !, _ : *(gain)
+with {
+    perc = shape < 0.4;
+    adsr = shape < 0.6;
+    ap = shape * 0.75 + 0.15;
+    ar = (1.0 - shape) * 0.75 + 0.15;
+    a = _if(perc, ap, _if(adsr, 0.45, ar));
+    dr = _if(perc, ap * 1.8, _if(adsr, 0.81, ar * 1.8));
+    s = _if(perc, 0.0, _if(adsr, (shape - 0.4) * 5.0, 1.0));
+    gain = _if(perc, 5.0 - shape * 10.0, 1.0);
+    // Level at the end of a segment, its time, its shape (segment 3: done).
+    lev(k) = (1.0, s, 0.0, 0.0) : ba.selectn(4, _clip(0, 3, k));
+    tim(k) = (a, dr, dr) : ba.selectn(3, _clip(0, 2, k));
+    shp(k, x) = (_interp(tb.lut_env_quartic, x, 256.0), _interp(tb.lut_env_expo, x, 256.0),
+        _interp(tb.lut_env_expo, x, 256.0), _interp(tb.lut_env_linear, x, 256.0))
+        : ba.selectn(4, _clip(0, 3, k));
+    // The segment is stored as 3 - segment: the recursion's 0 is the C++'s initial
+    // state, done (segment = num_segments).
+    loop(useg, ph, st, v) = 3 - seg1, ph1 + inc, st1, st1 + (lev(seg1) - st1) * t
+    with {
+        seg = 3 - useg;
+        adv = ph >= 1.0;
+        seg1 = _if(rise, 0, _if(fall, 2, _if(adv, seg + 1, seg)));
+        ph1 = _if(rise | fall | adv, 0.0, ph);
+        st1 = _if(rise, _if(seg == 3, 0.0, v), _if(fall, v, _if(adv, lev(seg), st)));
+        done = seg1 == 3;
+        sustained = (seg1 == 2) & g;
+        inc = _if(sustained | done, 0.0, _interp(tb.lut_env_increments, tim(seg1), 256.0));
+        t = shp(seg1, ph1);
+    };
+};
+
+//==================================== Random generator ==================================
+// `stmlib::Random`: s -> 1664525 s + 1013904223 (mod 2^32), one state shared by every
+// exciter and string, seeded with 0x21.
+//========================================================================================
+
+_lcg1(s) = s * 1664525 + 1013904223;
+// The state k steps after s (k = 0 .. 48).
+_lcg_jump(k, s) = tb.lcg_a(k) * s + tb.lcg_c(k);
+// `Random::GetFloat`: the word as a fraction of 2^32.
+_rfloat(w) = _u2f(w) / 4294967296.0;
+
+//======================================== Exciters ======================================
+// `elements::Exciter` in the three roles of `Voice`: the bow (model FLOW), the blow
+// (GRANULAR_SAMPLE_PLAYER) followed by `Tube` and the `Diffuser`, and the strike (the
+// meta control chooses SAMPLE_PLAYER, MALLET, PLECTRUM or PARTICLES).
+//========================================================================================
+
+// `Exciter::GetPulseAmplitude` and the exciter's low-pass (`set_g_r_h(g, 2, h)`).
+_pulse(timbre) = tb.lut_approx_svf_gain(int(timbre * 256.0));
+_exc_lp(timbre) = svf_lp(tb.lut_approx_svf_g(ci), 2.0, tb.lut_approx_svf_h(ci))
+with { ci = int(timbre * 256.0); };
+_exc_lp_on(on, timbre) = _svf_lp_on(on, tb.lut_approx_svf_g(ci), 2.0, tb.lut_approx_svf_h(ci))
+with { ci = int(timbre * 256.0); };
+
+//---------------------------------------`(el.)bow_flow`--------------------------------
+// The bow exciter, `ProcessFlow` with parameter 0.7, then the exciter's low-pass: a
+// value that flips sign when the generator's draw is below a threshold, mixed with the
+// draw. `w` is the generator's word for this sample, `reset` the rising edge of the
+// gate on the block's first sample, `timbre` the low-pass control.
+//
+// #### Usage
+//
+// ```
+// bow_flow(reset, w, timbre) : _
+// ```
+//
+// #### Test
+// ```
+// el = library("elements.lib");
+// bow_flow_test = el.bow_flow(0, (*(1664525) : +(1013904223)) ~ _, 0.5);
+// ```
+//----------------------------------------------------------------------------------------
+declare bow_flow license "MIT";
+bow_flow(reset, w, timbre) = (\(ps).(flow(_if(_start | reset, 0.5, ps)))) ~ _ : !, _ : _exc_lp(timbre)
+with {
+    p = 0.7;
+    scale = p * p * p * p;
+    threshold = 0.0001 + scale * 0.125;
+    u = _rfloat(w);
+    flow(ps) = psn, psn + (u - 0.5 - psn) * scale
+    with { psn = _if(u < threshold, 0.0 - ps, ps); };
+};
+
+//-------------------------------------`(el.)blow_granular`-----------------------------
+// The blow exciter, `ProcessGranularSamplePlayer`: the noise sample read at a rate set
+// by `timbre`, restarted at the point `meta` when the generator's word `w` falls below
+// 1 %; `sig` (the unit's signature) shifts the start of the sample. No filter.
+//
+// #### Usage
+//
+// ```
+// blow_granular(w, meta, timbre, sig) : _
+// ```
+//
+// #### Test
+// ```
+// el = library("elements.lib");
+// blow_granular_test = el.blow_granular((*(1664525) : +(1013904223)) ~ _, 0.5, 0.5, 0.0);
+// ```
+//----------------------------------------------------------------------------------------
+declare blow_granular license "MIT";
+blow_granular(w, meta, timbre, sig) = (\(ph).(next(ph), out(ph))) ~ _ : !, _
+with {
+    restart_point = int(meta * 32767.0) << 17;
+    inc = int(131072.0 * s2r(72.0 * timbre - 60.0));
+    base = int(sig * 8192.0);
+    next(ph) = _if(_ult(w, tb.restart_prob), restart_point, ph + inc);
+    out(ph) = (a + (b - a) * f) / 32768.0
+    with {
+        pi = _ushr(ph, 17);
+        f = float(ph & 131071) / 131072.0;
+        a = float(tb.smp_noise_sample(base + pi));
+        b = float(tb.smp_noise_sample(base + pi + 1));
+    };
+};
+
+//------------------------------------------`(el.)tube`---------------------------------
+// `elements::Tube`, the reed and bore of the blow exciter: a delay of one period, a
+// reed nonlinearity driven by the breath (the blow signal plus 0.8), a one-pole
+// low-pass, and the result added to its input. The inputs are block values: the
+// frequency `f` (cycles per sample), the envelope, the resonator's damping, the tube
+// level as timbre and its half as gain.
+//
+// #### Usage
+//
+// ```
+// _ : tube(f, env, damp, timbre, gain) : _
+// ```
+//
+// #### Test
+// ```
+// el = library("elements.lib");
+// tube_test = no.noise * 0.1 : el.tube(220.0 / el.SR, 1.0, 0.5, 1.0, 0.5);
+// ```
+//----------------------------------------------------------------------------------------
+declare tube license "MIT";
+tube(f, env, damp, timbre, gain, x) = loop ~ (_, _, _) : !, !, !, _
+with {
+    d0 = 1.0 / f;
+    // The delay halved until it fits in 2048 samples.
+    halve(d) = _if(d >= 2048.0, d * 0.5, d);
+    delay = d0 : halve : halve : halve : halve : halve : halve : halve;
+    di = int(delay);
+    df = delay - float(di);
+    e = min(env, 1.0);
+    dmp = 3.6 - damp * 1.8;
+    lpf = min(f * (1.0 + timbre * timbre * 256.0), 0.995);
+    loop(wprev, zs, pole) = out * 0.5, in, pole1, x + gain * e * pole1
+    with {
+        breath = x * dmp + 0.8;
+        a = _ring(2048, wprev, di);
+        b = _ring(2048, wprev, di + 1);
+        in = a + (b - a) * df;
+        pd = -0.95 * (in * e + zs) - breath;
+        reed = pd * -0.2 + 0.8;
+        out = _clip(-5.0, 5.0, pd * reed + breath);
+        pole1 = pole + lpf * (out - pole);
+    };
+};
+
+// An all-pass of `FxEngine` in 32-bit storage: tail read at L-1, write, `-k v + tail`.
+_ap_float(L, k, x) = (\(wprev).(v, v * (0.0 - k) + t
+    with { t = wprev @ (L - 2); v = x + k * t; })) ~ _ : !, _;
+
+//---------------------------------------`(el.)diffuser`--------------------------------
+// `elements::Diffuser`: four all-passes of 125, 179, 268 and 443 samples, coefficient
+// 0.625, that smear the blow signal.
+//
+// #### Usage
+//
+// ```
+// _ : diffuser : _
+// ```
+//
+// #### Test
+// ```
+// el = library("elements.lib");
+// diffuser_test = 1 - 1' : el.diffuser;
+// ```
+//----------------------------------------------------------------------------------------
+declare diffuser license "MIT";
+diffuser = _ap_float(126, 0.625) : _ap_float(180, 0.625) : _ap_float(269, 0.625) : _ap_float(444, 0.625);
+
+// One block of the strike exciter, before its filter: the 16 samples, the damping it
+// asks of the resonator, the generator's state after its draws, and its own state.
+// `r` is the generator's state when the strike starts drawing; `st` the exciter's
+// state at the block start (damp, phase, particle state, particle range, particle
+// delay, plectrum delay). Every model is computed; `m` (1 .. 4) chooses.
+_strike_block(rise, g, m, param, timbre, sig, r, damp0, ph0, ps0, pr0, dl0, pd0) =
+    par(k, BS, (sp_o(k), ml_o(k), pl_o(k), pa_o(k)) : ba.selectn(4, m - 1)),
+    damping, r_end, damp1, ph1, ps1, pr1, dl1, pd1
+with {
+    // SAMPLE_PLAYER: two of the nine samples crossfaded, read at a rate set by timbre.
+    idx = (1.0 - param) * 8.0;
+    ii0 = int(idx);
+    ii = _if(ii0 == 8, 7, ii0);
+    fr = _if(ii0 == 8, 1.0, idx - float(ii0));
+    off1 = tb.smp_boundaries(ii);
+    off2 = tb.smp_boundaries(ii + 1);
+    len1 = off2 - off1 - 1;
+    len2 = tb.smp_boundaries(ii + 2) - off2 - 1;
+    sp_inc = int(65536.0 * s2r(72.0 * timbre - 36.0 + 7.0));
+    damp_r = _if(rise, 0.0, damp0);
+    damp_g = _if(g, damp_r, 1.0 - 0.95 * (1.0 - damp_r));
+    sp_read(off, len, pi, pf) = _if(pi < len, a + (b - a) * pf, 0.0)
+    with {
+        k = off + min(pi, len);
+        a = float(tb.smp_sample_data(k));
+        b = float(tb.smp_sample_data(k + 1));
+    };
+    sp_ph(0) = _if(rise, 0, ph0);
+    sp_ph(k) = sp_ph(k - 1) : \(ph).(_if((_ushr(ph, 16) < len1) | (_ushr(ph, 16) < len2), ph + sp_inc, ph));
+    sp_o(k) = sp_ph(k) : \(ph).((s1 + (s2 - s1) * fr) / 65536.0
+    with {
+        pi = _ushr(ph, 16);
+        pf = float(ph & 65535) / 65536.0;
+        s1 = sp_read(off1, len1, pi, pf);
+        s2 = sp_read(off2, len2, pi, pf);
+    });
+    sp_damping = damp_g * _if(param >= 0.8, param * 5.0 - 4.0, 0.0);
+
+    // MALLET: one pulse on the rising edge.
+    amp = _pulse(timbre);
+    ml_o(k) = _if((k == 0) & rise, amp, 0.0);
+    ml_damping = damp_g * (1.0 - param);
+
+    // PLECTRUM: a small pulse on the rising edge, the main one after a delay.
+    pl_d0 = _if(rise, int(4096.0 * param * param) + 64, pd0);
+    pl_imp0 = _if(rise, 0.0 - amp * (0.05 + sig * 0.2), 0.0);
+    // State after step k: delay, damp, output of step k.
+    pl(0) = pl_step(pl_d0, damp0, pl_imp0);
+    pl(k) = pl(k - 1) : \(d, dm, o).(pl_step(d, dm, 0.0));
+    pl_step(d, dm, imp) = d1, _if(on, 1.0 - 0.997 * (1.0 - dm), 0.9 * dm), _if(on & (d1 == 0), amp, imp)
+    with { on = d != 0; d1 = _if(on, d - 1, d); };
+    pl_o(k) = (pl(k) : !, !, _);
+    pl_end = pl(BS - 1);
+
+    // PARTICLES: bounces at random intervals while the gate is high.
+    up_p = tb.up_probability;
+    down_p = tb.down_probability;
+    r_rise = _lcg1(r);
+    u0 = _rfloat(r_rise);
+    pa_r0 = _if(rise, r_rise, r);
+    pa_ps0 = _if(rise, 1.0 - 0.6 * u0 * u0, ps0);
+    pa_pr0 = _if(rise, 1.0, pr0);
+    pa_dl0 = _if(rise, 0, dl0);
+    // State after step k: generator, particle state, range, delay, output of step k.
+    pa(0) = pa_step(pa_r0, pa_ps0, pa_pr0, pa_dl0);
+    pa(k) = pa(k - 1) : \(rr, ps, pr, dl, o).(pa_step(rr, ps, pr, dl));
+    pa_step(rr, ps, pr, dl) = _if(on, rr1, rr), _if(on, ps1, ps), _if(on, pr1, pr),
+        _if(g, _if(dl == 0, dl1, dl - 1), dl), _if(on, ps1 * amp * (1.0 - gain), 0.0)
+    with {
+        on = g & (dl == 0);
+        ra = _lcg1(rr);
+        ua = _rfloat(ra);
+        amount = 1.05 + 0.5 * ua * ua;
+        rb = _lcg1(ra);
+        up = _ugt(rb, up_p);
+        rc = _lcg1(rb);
+        down = _ult(rc, down_p);
+        rr1 = _if(up, rb, rc);
+        ps1 = _if(up, min(ps * amount, pr + 0.25), _if(down, max(ps / amount, 0.02), ps));
+        dl1 = int(ps1 * 0.15 * SR);
+        gain = (1.0 - pr) * (1.0 - pr);
+        pr1 = pr * (1.0 - (1.0 - param) * (1.0 - param) * 0.5);
+    };
+    pa_o(k) = (pa(k) : !, !, !, !, _);
+    pa_end = pa(BS - 1);
+
+    damping = (sp_damping, ml_damping, (pl_end : !, _, !) * 0.5, 0.0) : ba.selectn(4, m - 1);
+    r_end = _if(m == 4, (pa_end : _, !, !, !, !), r);
+    damp1 = (damp_g, damp_g, (pl_end : !, _, !), damp0) : ba.selectn(4, m - 1);
+    ph1 = _if(m == 1, sp_ph(BS), ph0);
+    ps1 = _if(m == 4, (pa_end : !, _, !, !, !), ps0);
+    pr1 = _if(m == 4, (pa_end : !, !, _, !, !), pr0);
+    dl1 = _if(m == 4, (pa_end : !, !, !, _, !), dl0);
+    pd1 = _if(m == 3, (pl_end : _, !, !), pd0);
+};
+
+// The `src_phase_` of a string over one block (`String::ProcessInternal`): the phase
+// at the block's end and the number of ticks, the samples on which the string runs.
+_ticks(ph0, ratio) = run(BS, ph0, 0)
+with {
+    run(0, ph, n) = ph, n;
+    run(k, ph, n) = run(k - 1, _if(p1 > 1.0, p1 - 1.0, p1), n + (p1 > 1.0))
+    with { p1 = ph + ratio; };
+};
+
+//------------------------------------`(el.)random_block`-------------------------------
+// The generator over one block, and the strike exciter it feeds, once per block: the
+// state at the block start (from which the bow draws words 1 .. 16 and the blow
+// 17 .. 32), the 16 samples of the strike and the damping it asks, and the state each
+// string starts drawing from. `ns` is the number of strings processed (0 with the
+// modal resonator), `ratio(s)`, `reset(s)` their resampling; their `src_phase_` is
+// followed here, block by block, to know how many words each one draws.
+//
+// #### Usage
+//
+// ```
+// (blk, rise, g, m, param, timbre, sig, ns, ratio0 .. ratio4, reset0 .. reset4)
+//     : ondemand(random_block) : _, si.bus(BS), _, si.bus(NSTR)
+// ```
+//
+// #### Test
+// ```
+// el = library("elements.lib");
+// random_block_test = (el.blk, 1 - 1', 1, 2, 0.5, 0.5, 0.0, 0, par(s, 5, 1.0), par(s, 5, 1))
+//     : ondemand(el.random_block);
+// ```
+//----------------------------------------------------------------------------------------
+declare random_block license "MIT";
+random_block(rise, g, m, param, timbre, sig, ns, r0, r1, r2, r3, r4, z0, z1, z2, z3, z4) =
+    loop ~ si.bus(12) : si.block(12), si.bus(1 + BS + 1 + NSTR)
+with {
+    ratios = r0, r1, r2, r3, r4;
+    resets = z0, z1, z2, z3, z4;
+    ratio(s) = ratios : ba.selector(s, NSTR);
+    reset(s) = resets : ba.selector(s, NSTR);
+    // State: generator (xor its seed, so that the recursion's 0 is the seed), strike
+    // exciter (6), the strings' src_phase (5).
+    loop(t, damp, ph, ps, pr, dl, pd, q0, q1, q2, q3, q4) =
+        tn, damp1, ph1, ps1, pr1, dl1, pd1, par(s, NSTR, qn(s)),
+        sb, strike_out, damping, par(s, NSTR, base(s))
+    with {
+        sb = t xor tb.rng_seed;
+        // The particle state starts at 0.5 (`Exciter::Init`).
+        ps_init = _init(0.5, ps);
+        strike = _strike_block(rise, g, m, param, timbre, sig, _lcg_jump(32, sb),
+            damp, ph, ps_init, pr, dl, pd);
+        strike_out = strike : si.bus(BS), si.block(8);
+        damping = strike : si.block(BS), _, si.block(7);
+        r_strike = strike : si.block(BS + 1), _, si.block(6);
+        damp1 = strike : si.block(BS + 2), _, si.block(5);
+        ph1 = strike : si.block(BS + 3), _, si.block(4);
+        ps1 = strike : si.block(BS + 4), _, si.block(3);
+        pr1 = strike : si.block(BS + 5), _, si.block(2);
+        dl1 = strike : si.block(BS + 6), _, si.block(1);
+        pd1 = strike : si.block(BS + 7), _;
+        qs = q0, q1, q2, q3, q4;
+        q(s) = qs : ba.selector(s, NSTR);
+        on(s) = s < ns;
+        tk(s) = _ticks(_if(reset(s), 1.0, q(s)), ratio(s));
+        qn(s) = _if(on(s), (tk(s) : _, !), q(s));
+        n(s) = _if(on(s), (tk(s) : !, _), 0);
+        base(0) = r_strike;
+        base(s) = _lcg_jump(n(s - 1), base(s - 1));
+        tn = _lcg_jump(n(NSTR - 1), base(NSTR - 1)) xor tb.rng_seed;
+    };
+};
+
+//===================================== Modal resonator ==================================
+// `elements::Resonator`: 52 band-pass modes whose frequencies are stretched by the
+// geometry and whose Q fall with the damping and the brightness, picked up at two
+// positions (a cosine comb applied to the amplitudes), plus 8 bowed modes, each a
+// delay line of one period in a loop with a band-pass and the bow's friction.
+//========================================================================================
+
+// The C++'s initial coefficients of a mode, `Svf::Init`: `set_f_q<DIRTY>(0.01, 100)`.
+_g_init = _tan_dirty(0.01);
+_r_init = _svf_r(100.0);
+_h_init = _svf_h(_g_init, _r_init);
+
+// A coefficient refreshed when `upd`, held otherwise, x0 before its first refresh.
+_held(upd, x, x0) = (\(hv, ev).(_if(upd, x, hv), ev | upd)) ~ (_, _) : \(hv, ev).(_if(ev, hv, x0));
+
+//-------------------------------------`(el.)modes_block`-------------------------------
+// `Resonator::ComputeFilters`, once per block: the coefficients g, r, h of the 52
+// modes, the number of modes processed, and the delay and r, h of the 8 bowed modes.
+// The first 25 modes are refreshed every block, the others every other block, by the
+// parity of the block count, as the C++ does. Run it only on the blocks the resonator
+// processes (the count is the resonator's).
+//
+// #### Usage
+//
+// ```
+// (clk, f, geometry, brightness, damping) : ondemand(modes_block)
+//     : si.bus(3 * NM), _, si.bus(3 * NB)
+// ```
+//
+// #### Test
+// ```
+// el = library("elements.lib");
+// modes_block_test = (el.blk, 220.0 / el.SR, 0.2, 0.5, 0.25) : ondemand(el.modes_block);
+// ```
+//----------------------------------------------------------------------------------------
+declare modes_block license "MIT";
+modes_block(f, geo, bright, damp) = par(i, NM, coefs(i)), nmodes, par(i, NB, bowed(i))
+with {
+    clock = +(1) ~ _;
+    stiffness0 = _interp(tb.lut_stiffness, geo, 256.0);
+    q0 = 500.0 * _interp(tb.lut_4_decades, damp * 0.8, 256.0);
+    ba1 = 1.0 - geo;
+    ba2 = ba1 * ba1;
+    ba4 = ba2 * ba2;
+    ba8 = ba4 * ba4;
+    b = bright * (1.0 - 0.2 * ba8);
+    ql0 = b * (2.0 - b) * 0.85 + 0.15;
+    rate = geo * (2.0 - geo) * 0.1;
+    // Mode i: (partial frequency before clamping, resonance), from the loop's state:
+    // harmonic, stretch factor, stiffness, q, q loss.
+    st(0) = f, 1.0, stiffness0, q0, ql0;
+    st(i) = st(i - 1) : \(h, sf, k, q, ql).(h + f, sf + k, k * _if(k < 0.0, 0.93, 0.98),
+        q * qln, qln with { qln = ql + rate * (1.0 - ql); });
+    pf_raw(i) = st(i) : \(h, sf, k, q, ql).(h * sf);
+    pf(i) = min(pf_raw(i), 0.49);
+    qmode(i) = st(i) : \(h, sf, k, q, ql).(1.0 + pf(i) * q);
+    nmodes = par(i, NM, (pf_raw(i) < 0.49) * (i + 1)) : ba.parallelMax(NM);
+    upd(i) = (i <= 24) | ((i & 1) == (clock & 1));
+    g_new(i) = _tan_fast(pf(i));
+    r_new(i) = _svf_r(qmode(i));
+    coefs(i) = _held(upd(i), g_new(i), _g_init), _held(upd(i), r_new(i), _r_init),
+        _held(upd(i), _svf_h(g_new(i), r_new(i)), _h_init);
+    // The period of a bowed mode, halved until it fits its 1024-sample line.
+    halve(p) = _if(p >= 1024, p >> 1, p);
+    period(i) = int(1.0 / pf(i)) : halve : halve : halve : halve : halve : halve : halve;
+    rb(i) = _svf_r(1.0 + pf(i) * 1500.0);
+    bowed(i) = period(i), rb(i), _svf_h(g_new(i), rb(i));
+};
+
+// `Resonator::BowTable`, the friction of the bow on the bowed modes.
+_bow_table(x0, velocity) = x * _clip(0.0025, 0.245, 0.25 / (b2 * b2))
+with {
+    x = 0.13 * velocity - x0;
+    b1 = abs(x * 6.0) + 0.75;
+    b2 = b1 * b1;
+};
+
+// The amplitudes of a cosine oscillator of `CosineOscillator::InitApproximate`,
+// `Next()` n times from `Start()`.
+_cos_coef(f) = coef
+with {
+    f1 = f - 0.25;
+    neg = f1 < 0.0;
+    big = f1 > 0.5;
+    ff = _if(neg, 0.0 - f1, _if(big, f1 - 0.5, f1));
+    sign = _if(neg | big, 16.0, -16.0);
+    coef = sign * ff * (1.0 - 2.0 * ff);
+};
+_amps(n, f) = run(n, c * 0.25, 0.5)
+with {
+    c = _cos_coef(f);
+    run(1, a, b) = b + 0.5;
+    run(k, a, b) = b + 0.5, run(k - 1, b, c * b - a);
+};
+
+// A bowed mode: its delay line of one period read at 0.99, its band-pass
+// (normalised), its write. In its own domain: the C++ processes it only while it is
+// below the number of modes.
+_bowed_mode(in, period, g, r, h) = (\(wprev).(s, rd, s with {
+    rd = 0.99 * _ring(1024, wprev, period);
+    s = _svf_bp(g, r, h, in + rd) * r;
+})) ~ _ : !, _, _;
+
+
+// A ramp toward `target` in BS steps from the value it reached at the block start
+// (`ParameterInterpolator`, the C++'s accumulations of an increment): the value after
+// this sample's step. `clk` starts a block; x0 is the value before the first block.
+_ramp(clk, target, x0) = (\(v, inc).(vn, incn
+    with { vp = _init(x0, v); incn = _if(clk, (target - vp) / float(BS), inc); vn = vp + incn; }))
+    ~ (_, _) : _, !;
+
+//---------------------------------------`(el.)resonator`-------------------------------
+// `Resonator::Process`, sample by sample: the modes of `modes_block` (computed in a
+// domain clocked by `clk`, the block start) driven by the excitation `x` times 0.125,
+// summed with the amplitudes of a pickup at `pos` (ramped over each block) into the
+// center, and of a pickup moved by a triangle LFO (`mf` cycles per sample, offset
+// `mo`) into the side; the bowed modes driven by the excitation and by the bow table
+// of their own sum at the bow strength `bs`. Outputs center and side.
+//
+// #### Usage
+//
+// ```
+// resonator(clk, f, geometry, brightness, damping, x, bs, pos, mf, mo) : _, _
+// ```
+//
+// #### Test
+// ```
+// el = library("elements.lib");
+// resonator_test = el.resonator(el.blk, 220.0 / el.SR, 0.2, 0.5, 0.25, 1 - 1', 0.0, 0.3,
+//     0.5 / el.SR, 0.1);
+// ```
+//----------------------------------------------------------------------------------------
+declare resonator license "MIT";
+resonator(clk, f, geo, bright, damp, x, bs, pos, mf, mo) = loop ~ _ : !, _, _
+with {
+    NT = 3 * NM + 1 + 3 * NB;
+    cf = (clk, f, geo, bright, damp) : ondemand(modes_block);
+    sel(k) = cf : ba.selector(k, NT);
+    g(i) = sel(3 * i);
+    r(i) = sel(3 * i + 1);
+    h(i) = sel(3 * i + 2);
+    nm = sel(3 * NM);
+    period(i) = sel(3 * NM + 1 + 3 * i);
+    rb(i) = sel(3 * NM + 2 + 3 * i);
+    hb(i) = sel(3 * NM + 3 + 3 * i);
+    pp = _ramp(clk, pos, 0.0);
+    lfo_ph = (\(p).(_if(p1 >= 1.0, p1 - 1.0, p1) with { p1 = p + mf; })) ~ _;
+    lfo = _if(lfo_ph > 0.5, 1.0 - lfo_ph, lfo_ph);
+    amp(i) = _amps(NM, pp) : ba.selector(i, NM);
+    aux(i) = _amps(NM, mo + lfo) : ba.selector(i, NM);
+    input = x * 0.125;
+    on(i) = i < nm;
+    s(i) = _svf_bp_on(on(i), g(i), r(i), h(i), input);
+    sum_center = sum(i, NM, _if(on(i), s(i) * amp(i), 0.0));
+    sum_side = sum(i, NM, _if(on(i), s(i) * aux(i), 0.0));
+    loop(bsig) = _bow_table(bow_signal, bs), sum_center + bowed_sum, sum_side - sum_center
+    with {
+        in_b = input + bsig;
+        bm(i) = (on(i), in_b, period(i), g(i), rb(i), hb(i)) : ondemand(_bowed_mode);
+        bow_signal = sum(i, NB, _if(on(i), (bm(i) : _, !), 0.0));
+        bowed_sum = sum(i, NB, _if(on(i), (bm(i) : !, _) * amp(i) * 8.0, 0.0));
+    };
+};
+
+//========================================= Strings ======================================
+// `elements::String`: a Karplus-Strong string with a Hermite-interpolated delay line,
+// an FIR and an SVF for the damping, dispersion (an all-pass in the loop, noise on
+// the delay, a curved bridge), and a comb pickup; resampled by linear interpolation
+// below 15.7 Hz, where the line is too short.
+//========================================================================================
+
+// The delay of a string of frequency f and its resampling ratio: below 15.7 Hz the
+// string runs at `ratio` ticks per sample (`String::ProcessInternal`).
+_str_delay(f) = _clip(4.0, 2044.0, 1.0 / f);
+_str_ratio(f) = _if(r0 >= 0.9999, 1.0, r0) with { r0 = _str_delay(f) * f; };
+_str_reset(f) = _str_delay(f) * f >= 0.9999;
+
+// `String::set_dispersion`: the control mapped around a dead zone at 0.25.
+_dispersion(d) = _if(d < 0.24, (d - 0.24) * 4.166, _if(d > 0.26, (d - 0.26) * 1.35135, 0.0));
+
+// The block parameters of a string: comb position, dispersion, delay compensation of
+// the damping filter, FIR damping and brightness, the SVF's g and h, the noise filter.
+_string_params(f, b, p, d, disp) = cpos, _dispersion(disp), comp, coef, br, g, _svf_h(g, 2.0), nf
+with {
+    delay = _str_delay(f);
+    ratio = _str_ratio(f);
+    cpos = 0.5 - 0.98 * abs(p - 0.5);
+    lf = d * (2.0 - d);
+    rt60 = 0.07 * s2r(lf * 96.0) * SR;
+    rt60b = max(-120.0 * delay / ratio / rt60, -127.0);
+    coef0 = s2r(rt60b);
+    br0 = b * b;
+    nf = s2r((b - 1.0) * 48.0);
+    cut0 = min(24.0 + d * d * 48.0 + b * b * 24.0, 84.0);
+    df0 = min(f * s2r(cut0), 0.499);
+    inf = d >= 0.95;
+    ti = 20.0 * (d - 0.95);
+    coef = _if(inf, coef0 + ti * (1.0 - coef0), coef0);
+    br = _if(inf, br0 + ti * (1.0 - br0), br0);
+    dfq = _if(inf, df0 + ti * (0.4999 - df0), df0);
+    cut = _if(inf, cut0 + ti * (128.0 - cut0), cut0);
+    g = _tan_accurate(dfq);
+    comp = 1.0 - _interp(tb.lut_svf_shift, cut, 1.0);
+};
+
+// A ring buffer of N cells read after its write at offset k (`DelayLine::Read` after
+// `Write`): s, the value just written, when k - 1 is a multiple of N.
+_ring_post(N, s, wprev, k) = _if(m == 0, s, wprev @ _clip(0, N - 1, m - 1))
+with { m = _clip(0, N - 1, (k - 1 + N) % N); };
+
+// The all-pass of the dispersion on the stretch line (1024 cells), in its own domain:
+// the C++ writes the line only when the all-pass is in the loop.
+_stretch_ap(x, apd, gain) = (\(wprev).(wr, (0.0 - wr) * gain + rdv
+    with { rdv = _ring(1024, wprev, apd); wr = x + gain * rdv; })) ~ _ : !, _;
+
+// `DCBlocker::Process`.
+_dc_block(pole, x) = (\(y).(y * pole + x - x')) ~ _;
+
+// The ramp of `DampingFilter`: the value before this tick's step.
+_ramp_pre(first, target) = (\(v, inc).(v + incn, incn, v
+    with { incn = _if(first, (target - v) / float(BS), inc); })) ~ (_, _) : !, !, _;
+
+// One tick of a string: its loop, from the read of the delay line to its write.
+// `first` marks the block's first tick, `m` its rank in the block, `base` the
+// generator's state from which the string draws in this block. Outputs the last two
+// values written and picked up by the comb (`out_sample_`, `aux_sample_`).
+_string_tick(first, m, base, x, delay_t, cpos_t, disp_t, comp_t, fd_t, fb_t, g, h, nf) =
+    loop ~ (_, _) : \(w, cb, o0, o1, a0).(o0, o1, a0, a0')
+with {
+    ramp(target, x0) = _ramp(first, target, x0);
+    dv = ramp(delay_t, tb.string_delay0);
+    cp = ramp(cpos_t, 0.0);
+    ds = ramp(disp_t, 0.0);
+    cm = ramp(comp_t, 0.0);
+    comb = dv * cp;
+    delay0 = dv * cm - 1.0;
+    noise = (2.0 * _rfloat(_lcg_jump(m + 1, base)) - 1.0) * (1.0 / (0.2 + nf));
+    dn = (\(y).(y + nf * (noise - y))) ~ _;
+    stretch = _if(ds <= 0.0, 0.0, ds * (2.0 - ds) * 0.475);
+    na0 = _if(ds > 0.75, 4.0 * (ds - 0.75), 0.0);
+    na = na0 * na0 * 0.025;
+    bc0 = _if(ds < 0.0, 0.0 - ds, 0.0);
+    bc = bc0 * bc0 * 0.01;
+    apg = -0.618 * ds / (0.15 + abs(ds));
+    fd = _ramp_pre(first, fd_t);
+    fb = _ramp_pre(first, fb_t);
+    fir(y) = fd * ((1.0 + fb) * 0.5 * y' + (1.0 - fb) * 0.25 * (y + y''));
+    loop(wprev, cbprev) = s4, cb, s4, wprev, aux0
+    with {
+        delay = delay0 * (1.0 + dn * na - cbprev * bc);
+        apd = delay * stretch;
+        maind = delay - apd;
+        use_ap = (apd >= 4.0) & (maind >= 4.0);
+        s0 = _if(use_ap, (use_ap, _hermite(2048, wprev, maind), int(apd), apg) : ondemand(_stretch_ap),
+            _hermite(2048, wprev, delay));
+        s1 = s0 + bc0 * (_dc_block(1.0 - 20.0 / SR, s0) - s0);
+        value = abs(s1) - 0.025;
+        cb = (abs(value) + value) * _if(s1 > 0.0, 1.0, -1.5);
+        s4 = s1 + x : fir : svf_lp(g, 2.0, h);
+        ci = int(comb);
+        cfr = comb - float(ci);
+        ca = _ring_post(2048, s4, wprev, ci);
+        cb2 = _ring_post(2048, s4, wprev, ci + 1);
+        aux0 = ca + (cb2 - ca) * cfr;
+    };
+};
+
+//------------------------------------------`(el.)string`-------------------------------
+// One `elements::String`, sample by sample: frequency f (cycles per sample),
+// brightness b, position p, damping d and dispersion control disp, read at each block
+// start `clk`; `base` is the generator's state the string draws from in the block.
+// The string ticks once per sample above 15.7 Hz, less often below, and its output is
+// crossfaded between its last two values. Outputs the string and its comb pickup.
+//
+// #### Usage
+//
+// ```
+// _ : string(clk, base, f, b, p, d, disp) : _, _
+// ```
+//
+// #### Test
+// ```
+// el = library("elements.lib");
+// string_test = 1 - 1' : el.string(el.blk, 33, 220.0 / el.SR, 0.5, 0.3, 0.3, 0.25);
+// ```
+//----------------------------------------------------------------------------------------
+declare string license "MIT";
+string(clk, base, f, b, p, d, disp, x) = o1 + (o0 - o1) * sp, a1 + (a0 - a1) * sp
+with {
+    prm = (clk, f, b, p, d, disp) : ondemand(_string_params);
+    pr(k) = prm : ba.selector(k, 8);
+    ratio = _str_ratio(f);
+    reset = _str_reset(f);
+    // src_phase_ and the tick of this sample.
+    ph = (\(q).(_if(p1 > 1.0, p1 - 1.0, p1), p1 > 1.0
+        with { p1 = _if(clk & reset, 1.0, q) + ratio; })) ~ _;
+    sp = (ph : _, !);
+    tick = (ph : !, _);
+    // Ticks of the block before this one.
+    count = (\(c).(_if(clk, 0, c) + tick)) ~ _;
+    m = count - tick;
+    tk = (tick, m == 0, m, base, x, _str_delay(f), pr(0), pr(1), pr(2), pr(3), pr(4), pr(5),
+        pr(6), pr(7)) : ondemand(_string_tick);
+    o0 = tk : ba.selector(0, 4);
+    o1 = tk : ba.selector(1, 4);
+    a0 = tk : ba.selector(2, 4);
+    a1 = tk : ba.selector(3, 4);
+};
+
+// The chord of the strings model (`Voice::Process`): semitones of the five strings.
+_chords = waveform{
+    0.0, -12.0, 0.0, 0.01, 12.0,
+    0.0, -12.0, 3.0, 7.0, 10.0,
+    0.0, -12.0, 3.0, 7.0, 12.0,
+    0.0, -12.0, 3.0, 7.0, 14.0,
+    0.0, -12.0, 3.0, 7.0, 17.0,
+    0.0, -12.0, 7.0, 12.0, 19.0,
+    0.0, -12.0, 4.0, 7.0, 17.0,
+    0.0, -12.0, 4.0, 7.0, 14.0,
+    0.0, -12.0, 4.0, 7.0, 12.0,
+    0.0, -12.0, 4.0, 7.0, 11.0,
+    0.0, -12.0, 5.0, 7.0, 12.0
+};
+_chord(ci, s) = rdtable(_chords, ci * 5 + s);
+
+// The chord chosen by the geometry, with the C++'s hysteresis; once per block of a
+// strings model.
+_chord_block(geo) = (\(prev).(idx, idx with {
+    c = geo * 10.0;
+    idx = _clip(0, 10, int(c + _if(c > float(prev), -0.1, 0.1) + 0.5));
+})) ~ _ : !, _;
+
+//========================================== Voice =======================================
+// `elements::Voice`: the exciters summed into the excitation, and the resonator.
+//========================================================================================
+
+// A control held for the block it is read at (the C++ reads its patch once per block).
+_hb(x) = (blk, x) : ondemand(_);
+
+//-------------------------------------------`(el.)voice`-------------------------------
+// `Voice::Process`, with the patch of the panel controls: frequency f (cycles per
+// sample), strength (the pressure input), gate, resonator model md (0 modal, 1
+// string, 2 strings), and the two audio inputs of the module. Outputs raw (the
+// excitation, DC-blocked and normalised with the strings), center and side.
+//
+// #### Usage
+//
+// ```
+// voice(f, strength, gate, md, blow_in, strike_in) : _, _, _
+// ```
+//
+// #### Test
+// ```
+// el = library("elements.lib");
+// voice_test = el.voice(el.note2f(57.0), 0.5, button("gate"), 0, 0.0, 0.0);
+// ```
+//----------------------------------------------------------------------------------------
+declare voice license "MIT";
+voice(fin, strength_in, gate_in, md_in, blow_in, strike_in) = raw_out, center, sides
+with {
+    f = _hb(fin);
+    md = _hb(md_in);
+    shape = _hb(envelope);
+    bow_l = _hb(bow);
+    blow_l = _hb(blow);
+    strike_l = _hb(strike);
+    bright = _hb(brightness);
+    geo = _hb(geometry);
+    damp = _hb(damping);
+    sig = _hb(signature);
+    modal = md == 0;
+    strings = md >= 1;
+    nstr = _if(md == 0, 0, _if(md == 1, 1, NSTR));
+
+    // Gate flags and envelope, once per block.
+    flags = (blk, gate_in) : ondemand(gate_flags);
+    rise = (flags : _, !, !);
+    fall = (flags : !, _, !);
+    gb = (flags : !, !, _);
+    env_b = (blk, rise, fall, gb, shape) : ondemand(envelope_block);
+    ev = _ramp(blk, env_b, 0.0);
+    st = _ramp(blk, strength_in * 256.0, 0.0);
+    sti = int(st);
+    accent = tb.lut_accent_gain_coarse(sti) * tb.lut_accent_gain_fine(int(256.0 * (st - float(sti))));
+
+    // Strike meta: SAMPLE_PLAYER, MALLET, PLECTRUM, PARTICLES (1 .. 4).
+    sm = _hb(mallet);
+    meta = _if(sm <= 0.4, sm * 0.625, sm * 1.25 - 0.25) * 4.0;
+    smodel = min(4, 1 + int(meta));
+    sparam = meta - float(int(meta));
+    stimbre = _hb(strike_timbre);
+
+    // The strings' frequencies, chord included.
+    ci = (blk & strings, geo) : ondemand(_chord_block);
+    fs(s) = f * s2r(_chord(ci, s));
+
+    // Generator and strike, once per block.
+    rnd = (blk, rise, gb, smodel, sparam, stimbre, sig, nstr, par(s, NSTR, _str_ratio(fs(s))),
+        par(s, NSTR, _str_reset(fs(s)))) : ondemand(random_block);
+    rsel(k) = rnd : ba.selector(k, 1 + BS + 1 + NSTR);
+    sb = rsel(0);
+    strike_raw = par(k, BS, rsel(1 + k)) : ba.selectn(BS, bpos);
+    strike_damping = rsel(1 + BS);
+    base(s) = rsel(2 + BS + s);
+
+    // Bow: words 1 .. 16 of the block.
+    bow_sig = bow_flow(rise & blk, _lcg_jump(bpos + 1, sb), _hb(bow_timbre) * (0.4 + 0.6 * bright));
+
+    // Blow: words 17 .. 32, the tube, the diffuser.
+    bl = blow_l * 1.5;
+    tube_level = _if(bl > 1.0, (bl - 1.0) * 2.0, 0.0);
+    blow_level = _if(bl < 1.0, bl * 0.4, 0.4);
+    blow_sig = blow_granular(_lcg_jump(bpos + 17, sb), _hb(flow), _hb(blow_timbre), sig)
+        : tube(f, env_b, damp, tube_level, tube_level * 0.5) : *(blow_level) : +(blow_in) : diffuser;
+
+    // Strike: its low-pass for the mallet, the plectrum and the particles.
+    strike_f = _if(smodel >= 2, strike_raw : _exc_lp_on(smodel >= 2, stimbre), strike_raw);
+    sl = strike_l * 1.25;
+    strike_bleed = _if(sl > 1.0, (sl - 1.0) * 2.0, 0.0);
+    strike_level = min(sl, 1.0) * 1.5;
+
+    // The excitation.
+    bsb = ev * bow_l;
+    strike_acc = strike_f * accent;
+    raw = (bow_sig * bsb * 0.125 * accent + blow_sig * (ev * accent) + strike_acc * strike_level
+        + strike_in) * 0.5;
+
+    // Palm mutes: the strike and the bow damp the resonator on release.
+    damping_eff = _hb(max(0.0, damp - strike_damping * strike_level * 0.125
+        - (1.0 - bsb) * bow_l * 0.0625));
+
+    // Modal resonator.
+    modal_out = (modal, blk, f, geo, bright, damping_eff, raw, bsb, _hb(position),
+        _hb(mod_frequency) / SR, _hb(mod_offset)) : ondemand(resonator);
+
+    // Strings.
+    raw_s = (strings, raw) : ondemand(_dc_block(1.0 - 10.0 / SR)) : *(1.0 / float(nstr));
+    disp(s) = _if(md == 1, geo, _if(bright < 0.5, 0.0, (bright - 0.5) * -0.4));
+    str(s) = (s < nstr, blk, base(s), fs(s), bright, _hb(position), damping_eff, disp(s), raw_s)
+        : ondemand(string);
+    left = sum(s, NSTR, _if(s < nstr, (str(s) : _, !), 0.0));
+    right = sum(s, NSTR, _if(s < nstr, (str(s) : !, _), 0.0));
+
+    raw_out = _if(modal, raw, raw_s);
+    center = _if(modal, (modal_out : _, !), left - right) + strike_bleed * strike_acc;
+    sides = _if(modal, (modal_out : !, _), left + right);
+};
+
+//===================================== Part and reverb ==================================
+// `elements::Part`: the voice mixed to stereo by the space control, soft-limited, and
+// `elements::Reverb`, a Griesinger reverb (the Dattorro topology) in 16-bit storage.
+//========================================================================================
+
+// `FxEngine` with FORMAT_16_BIT: a value as its delay memory stores it.
+_q16(x) = float(_clip(-32768, 32767, int(_clip(-1.0e6, 1.0e6, x * 32768.0)))) / 32768.0;
+
+// The two LFOs of the reverb's engine: approximate cosine oscillators stepped every
+// 32 samples (when the write pointer is a multiple of 32), of coefficient c, the
+// C++'s float32 value (`tb.reverb_lfo1_coef`, `tb.reverb_lfo2_coef`).
+_reverb_lfo(c) = (\(y0, y1).(_if(upd, c * y0p - y1p, y0p), _if(upd, y0p, y1p)
+    with { y0p = _init(0.5, y0); y1p = _init(c * 0.25, y1); })) ~ (_, _) : !, +(0.5)
+with {
+    upd = ((ba.time + 1) % 32) == 0;
+};
+
+// A 16-bit all-pass: tail at L-1, write of the quantized accumulator, `k v + tail`.
+_ap16(L, kin, kout, wprev, x) = q, v * kout + t
+with {
+    t = wprev @ (L - 2);
+    v = x + t * kin;
+    q = _q16(v);
+};
+
+//-----------------------------------------`(el.)reverb`--------------------------------
+// `elements::Reverb::Process`: four input all-passes (the first one smeared by an LFO
+// inside its line), then two loops of two all-passes and a delay, each with a
+// low-pass, crossed; the wet signal replaces the dry one by `amount`. `kap` is the
+// diffusion, `krt` the reverb time, `gain` the input gain, `klp` the loops' low-pass.
+//
+// #### Usage
+//
+// ```
+// _, _ : reverb(amount, kap, krt, gain, klp) : _, _
+// ```
+//
+// #### Test
+// ```
+// el = library("elements.lib");
+// reverb_test = (1 - 1'), 0 : el.reverb(0.5, 0.625, 0.95, 0.2, 0.7);
+// ```
+//----------------------------------------------------------------------------------------
+declare reverb license "MIT";
+reverb(amount, kap, krt, gain, klp, l, r) = loop ~ si.bus(12) : si.block(12), _, _
+with {
+    lfo1 = _reverb_lfo(tb.reverb_lfo1_coef);
+    lfo2 = _reverb_lfo(tb.reverb_lfo2_coef);
+    o1 = 10.0 + 80.0 * lfo1;
+    // The LFOs stay within [0, 1]: the clamps only bound the delays for the compiler.
+    o1i = _clip(10, 90, int(o1));
+    o1f = o1 - float(o1i);
+    o2 = 6211.0 + 100.0 * lfo2;
+    o2i = _clip(6211, 6311, int(o2));
+    o2f = o2 - float(o2i);
+    loop(w1p, w2p, w3p, w4p, wap, wbp, d1p, wcp, wdp, d2p, lp1p, lp2p) =
+        w1, w2, w3, w4, wa, wb, d1, wc, wd, d2, lp1, lp2,
+        l + (wet1 - l) * amount, r + (wet2 - r) * amount
+    with {
+        // The smear of ap1: read at 10 .. 90 samples, written back at offset 100,
+        // read as the tail 49 samples later.
+        sa = w1p @ (o1i - 1);
+        sb = w1p @ o1i;
+        tail1 = _q16(sa + (sb - sa) * o1f) @ 49;
+        v1 = (l + r) * gain + tail1 * kap;
+        w1 = _q16(v1);
+        y1 = v1 * (0.0 - kap) + tail1;
+        a2 = _ap16(214, kap, 0.0 - kap, w2p, y1);
+        w2 = (a2 : _, !);
+        a3 = _ap16(319, kap, 0.0 - kap, w3p, (a2 : !, _));
+        w3 = (a3 : _, !);
+        a4 = _ap16(527, kap, 0.0 - kap, w4p, (a3 : !, _));
+        w4 = (a4 : _, !);
+        apout = (a4 : !, _);
+        // Loop 1: del2 (interpolated, LFO 2), low-pass, dap1a, dap1b, del1.
+        ia = d2p @ (o2i - 1);
+        ib = d2p @ o2i;
+        lp1 = lp1p + klp * (apout + (ia + (ib - ia) * o2f) * krt - lp1p);
+        aa = _ap16(2182, 0.0 - kap, kap, wap, lp1);
+        wa = (aa : _, !);
+        ab = _ap16(2690, kap, 0.0 - kap, wbp, (aa : !, _));
+        wb = (ab : _, !);
+        d1 = _q16((ab : !, _));
+        wet1 = (ab : !, _) * 2.0;
+        // Loop 2: del1's tail, low-pass, dap2a, dap2b, del2.
+        lp2 = lp2p + klp * (apout + (d1p @ 4499) * krt - lp2p);
+        ac = _ap16(2525, kap, 0.0 - kap, wcp, lp2);
+        wc = (ac : _, !);
+        ad = _ap16(2197, 0.0 - kap, kap, wdp, (ac : !, _));
+        wd = (ad : _, !);
+        d2 = _q16((ad : !, _));
+        wet2 = (ad : !, _) * 2.0;
+    };
+};
+
+//-------------------------------------------`(el.)body`--------------------------------
+// What `Part::Process` does after the voices: their raw, center and side mixed to
+// stereo by the space control (the raw excitation below 0.1, then the stereo spread),
+// each channel soft-limited, then the reverb (from 0.6, frozen above 1.75). Outputs
+// main and aux, the module's OUT and AUX. The voices' signals add before it, as
+// Part's voices do.
+//
+// #### Usage
+//
+// ```
+// _, _, _ : body : _, _
+// ```
+//
+// #### Test
+// ```
+// el = library("elements.lib");
+// body_test = el.voice(el.note2f(57.0), 0.5, button("gate"), 0, 0.0, 0.0) : el.body;
+// ```
+//----------------------------------------------------------------------------------------
+declare body license "MIT";
+body = mix : soft_limit, soft_limit : reverb(amount, kap, krt, gain, klp)
+with {
+    spc = _hb(space);
+    s0 = min(spc, 1.0);
+    raw_gain = _if(s0 <= 0.05, 1.0, _if(s0 <= 0.1, 2.0 - s0 * 20.0, 0.0));
+    s1 = _if(s0 >= 0.1, s0 - 0.1, 0.0);
+    spread = min(s1, 0.7);
+    amount = _if(s1 >= 0.5, s1 - 0.5, 0.0);
+    freeze = spc >= 1.75;
+    kap = _hb(diffusion);
+    krt = _if(freeze, 1.0, 0.35 + 1.2 * amount);
+    gain = _if(freeze, 0.0, 0.2);
+    klp = _if(freeze, 1.0, _hb(reverb_lp));
+    mix(raw, c, s) = c - s * spread, lft + (raw - lft) * raw_gain
+    with { lft = c + s * spread; };
+};
+
+//-------------------------------------------`(el.)part`--------------------------------
+// `Part::Process` with one voice: the voice at the MIDI pitch `nt` + modulation, then
+// `body`. Outputs main and aux.
+//
+// #### Usage
+//
+// ```
+// part(nt, strength, gate, md, blow_in, strike_in) : _, _
+// ```
+//
+// #### Test
+// ```
+// el = library("elements.lib");
+// part_test = el.part(57.0, 0.5, button("gate"), 0, 0.0, 0.0);
+// ```
+//----------------------------------------------------------------------------------------
+declare part license "MIT";
+part(nt, strength_in, gate_in, md, blow_in, strike_in) =
+    voice(note2f(nt + modulation), strength_in, gate_in, md, blow_in, strike_in) : body;
+
+//------------------------------------------`(el.)freq2note`----------------------------
+// The MIDI pitch of a frequency in Hz, for a host that gives frequencies.
+//
+// #### Usage
+//
+// ```
+// freq2note(hz) : _
+// ```
+//
+// #### Test
+// ```
+// el = library("elements.lib");
+// freq2note_test = el.freq2note(440.0);
+// ```
+//----------------------------------------------------------------------------------------
+declare freq2note license "MIT";
+freq2note(hz) = 69.0 + 12.0 * log(hz / 440.0) / log(2.0);
+
+//------------------------------------------`(el.)module`-------------------------------
+// The module with its panel: the voice at the panel's note, strength, gate and model,
+// the two audio inputs (blow, strike) as the program's inputs. Outputs main, aux.
+//
+// #### Usage
+//
+// ```
+// _, _ : module : _, _
+// ```
+//
+// #### Test
+// ```
+// el = library("elements.lib");
+// module_test = 0, 0 : el.module;
+// ```
+//----------------------------------------------------------------------------------------
+declare module license "MIT";
+module(blow_in, strike_in) = part(note, strength, gate, model, blow_in, strike_in);

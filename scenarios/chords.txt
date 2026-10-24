@@ -1,0 +1,22 @@
+# Five strings (model 2): chords chosen by the geometry, a low note below 15.7 Hz
+# for the transposed string, a bowed chord.
+length 160000
+0 model 2
+0 note 50
+0 geometry 0.3
+0 gate 1
+16000 gate 0
+32000 geometry 0.71
+32000 brightness 0.8
+32000 gate 1
+48000 gate 0
+64000 note 22
+64000 geometry 0.0
+64000 gate 1
+96000 gate 0
+112000 bow 0.8
+112000 strike 0.0
+112000 envelope 0.5
+112000 note 55
+112000 geometry 0.45
+112000 gate 1

@@ -1,0 +1,5 @@
+# One note struck with the default patch (modal resonator), released after 1 s.
+length 96000
+0 note 57
+0 gate 1
+32000 gate 0

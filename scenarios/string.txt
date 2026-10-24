@@ -1,0 +1,20 @@
+# One string (model 1): dispersion through geometry, brightness and damping.
+length 128000
+0 model 1
+0 note 45
+0 geometry 0.25
+0 gate 1
+16000 gate 0
+32000 geometry 0.6
+32000 note 52
+32000 gate 1
+48000 gate 0
+64000 geometry 0.1
+64000 brightness 0.9
+64000 damping 0.97
+64000 gate 1
+80000 gate 0
+96000 geometry 0.9
+96000 damping 0.4
+96000 note 76
+96000 gate 1
