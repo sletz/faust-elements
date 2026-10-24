@@ -3,6 +3,7 @@
 // notes from the on-screen keyboard, the computer keyboard and Web MIDI.
 import { CONTROLS, GROUPS, PRESETS } from "./controls.js";
 import { controlKey, uiItems } from "./faust-wasm-dsp.js";
+import { createOrbit } from "./orbit.js";
 
 const DSP_DIR = "dsp/";
 // The module's sample rate: every table and delay of the model is computed for it.
@@ -19,6 +20,9 @@ const TEXT = {
     octave: "Octave", allInputs: "All inputs", noMidi: "No Web MIDI",
     keysHelp: "Computer keyboard: two rows from Z and Q, ← → change the octave. Double-click a control to reset it.",
     reset: "reset",
+    orbitTab: "Orbit",
+    orbitHelp: "Every control is a dot: drag one, or the centre to move them all; Random scatters them. Library opens the presets projected on a plane: click a disc to recall it, drag the cross between discs to morph from one sound to another, double-click to keep the current sound. Play notes while you explore.",
+    orbitCenter: "Bring every control back to the centre", orbitRandom: "Scatter the controls at random",
   },
   fr: {
     title: "Mutable Instruments Elements en Faust",
@@ -28,6 +32,9 @@ const TEXT = {
     load: "Charge", voices: "Voix", level: "Niveau",
     preset: "Préréglage", polyphony: "Polyphonie", midi: "Entrée MIDI", velocity: "Vélocité",
     octave: "Octave", allInputs: "Toutes les entrées", noMidi: "Pas de Web MIDI",
+    orbitTab: "Orbite",
+    orbitHelp: "Chaque commande est un point : déplacez-en un, ou le centre pour les déplacer tous ; Random les disperse. Library ouvre les préréglages projetés sur un plan : cliquez un disque pour le rappeler, glissez la croix entre les disques pour passer d'un son à l'autre, double-cliquez pour garder le son courant. Jouez des notes pendant l'exploration.",
+    orbitCenter: "Ramener toutes les commandes au centre", orbitRandom: "Disperser les commandes au hasard",
     keysHelp: "Clavier d'ordinateur : deux rangées depuis Z et Q (W et A en AZERTY), ← → changent l'octave. Double-cliquez une commande pour la remettre à zéro.",
     reset: "défaut",
   },
@@ -49,8 +56,21 @@ function send(message) {
   if (audio.node) audio.node.port.postMessage(message);
 }
 
-function setControl(key, value) {
+// The orbit explorer (web/orbit.js), built once the DSPs are loaded, and the
+// element it renders into, kept across the rebuilds of the tabs.
+let orbit = null;
+const orbitHost = document.createElement("div");
+orbitHost.id = "orbit-root";
+// True while a preset sets every control, so that the orbit is updated once.
+let batching = false;
+
+function setControl(key, value, fromOrbit = false) {
+  const r = ranges.get(key);
+  // A stepped control (the model) takes whole values; the orbit interpolates.
+  if (r && r.step >= 1) value = Math.round(value);
+  if (values.get(key) === value && fromOrbit) return;
   values.set(key, value);
+  if (orbit && !fromOrbit && !batching) orbit.setValues([[key, value]]);
   send({ type: "control", key, value });
   const row = document.querySelector(`[data-key="${key}"]`);
   if (row) {
@@ -165,7 +185,10 @@ let currentTab = (() => {
 function buildControls() {
   const root = $("controls");
   root.innerHTML = "";
-  const groups = GROUPS.filter((g) => CONTROLS.some((c) => c.group === g.id && ranges.has(c.key)));
+  const groups = [
+    ...GROUPS.filter((g) => CONTROLS.some((c) => c.group === g.id && ranges.has(c.key))),
+    { id: "orbit", en: TEXT.en.orbitTab, fr: TEXT.fr.orbitTab },
+  ];
   if (!groups.some((g) => g.id === currentTab)) currentTab = groups[0].id;
   const bar = document.createElement("div");
   bar.className = "tabs";
@@ -186,6 +209,13 @@ function buildControls() {
     panel.id = `panel-${g.id}`;
     panel.setAttribute("role", "tabpanel");
     panel.setAttribute("aria-labelledby", tab.id);
+    if (g.id === "orbit") {
+      panel.classList.add("orbit-panel");
+      const help = document.createElement("p");
+      help.className = "help";
+      help.textContent = t("orbitHelp");
+      panel.append(help, orbitHost);
+    }
     for (const c of CONTROLS.filter((x) => x.group === g.id && ranges.has(x.key))) {
       const r = ranges.get(c.key);
       const row = document.createElement("div");
@@ -235,6 +265,29 @@ function showTab(id) {
     tab.tabIndex = on ? 0 : -1;
   }
   for (const panel of document.querySelectorAll("#controls .panel")) panel.hidden = panel.id !== `panel-${id}`;
+  // The orbit lays its controls out from its size: it is built the first time
+  // its tab is shown with the DSPs loaded, then only measured again.
+  if (id === "orbit" && audio.json) {
+    requestAnimationFrame(() => {
+      if (orbit) orbit.resize();
+      else orbit = makeOrbit();
+    });
+  }
+}
+
+function makeOrbit() {
+  return createOrbit(orbitHost, {
+    voiceJson: audio.json.voice,
+    bodyJson: audio.json.body,
+    presets: PRESETS,
+    lang,
+    values,
+    onChange: (key, value) => {
+      setControl(key, value, true);
+      markPresetModified();
+    },
+    tooltips: { centerButton: t("orbitCenter"), randomButton: t("orbitRandom") },
+  });
 }
 
 function buildPresets() {
@@ -257,7 +310,10 @@ function showPresetHelp() {
 function applyPreset(id) {
   const p = PRESETS.find((x) => x.id === id);
   if (!p) return;
+  batching = true;
   for (const [k, r] of ranges) setControl(k, k in p.values ? p.values[k] : r.init);
+  batching = false;
+  if (orbit) orbit.setValues([...values]);
   showPresetHelp();
 }
 
@@ -321,6 +377,8 @@ function keyToNote(code) {
 
 function onKeyDown(e) {
   if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT" || e.repeat) return;
+  // The orbit has its own keys (R, L, arrows, space).
+  if (e.target instanceof Element && e.target.closest(".orbit-ui-root")) return;
   if (e.target.getAttribute && e.target.getAttribute("role") === "tab") return;
   if (e.code === "ArrowLeft" || e.code === "ArrowRight") {
     octave = Math.max(0, Math.min(7, octave + (e.code === "ArrowLeft" ? -1 : 1)));

@@ -135,9 +135,9 @@ export const PRESETS = [
   },
   {
     id: "bell",
-    en: ["Bell", "A hard mallet on stretched, bright, long modes."],
-    fr: ["Cloche", "Un maillet dur sur des modes étirés, brillants et longs."],
-    values: { "exciter/mallet": 0.55, "exciter/strike_timbre": 0.8, "resonator/geometry": 0.78, "resonator/brightness": 0.75, "resonator/damping": 0.15, "resonator/position": 0.4, "space/space": 1.1 },
+    en: ["Bell", "A recorded mallet on stretched, bright, long modes."],
+    fr: ["Cloche", "Un maillet enregistré sur des modes étirés, brillants et longs."],
+    values: { "exciter/strike": 0.8, "exciter/mallet": 0.3, "exciter/strike_timbre": 0.7, "resonator/geometry": 0.78, "resonator/brightness": 0.75, "resonator/damping": 0.15, "resonator/position": 0.4, "space/space": 1.1 },
   },
   {
     id: "glass",
@@ -149,7 +149,7 @@ export const PRESETS = [
     id: "pipe",
     en: ["Reed pipe", "The blow above 2/3: the reed and the bore, on harmonic modes."],
     fr: ["Tuyau à anche", "Le souffle au-delà de 2/3 : l'anche et le tuyau, sur des modes harmoniques."],
-    values: { "exciter/strike": 0, "exciter/blow": 0.92, "exciter/flow": 0.35, "exciter/blow_timbre": 0.45, "exciter/envelope": 0.55, "resonator/geometry": 0.27, "resonator/brightness": 0.45, "resonator/damping": 0.65, "space/space": 0.9 },
+    values: { "exciter/strike": 0, "exciter/blow": 0.75, "exciter/flow": 0.35, "exciter/blow_timbre": 0.45, "exciter/envelope": 0.55, "resonator/geometry": 0.27, "resonator/brightness": 0.4, "resonator/damping": 0.45, "space/space": 0.9 },
   },
   {
     id: "breath",
@@ -161,7 +161,7 @@ export const PRESETS = [
     id: "pluck",
     en: ["Plucked string", "One string and the plectrum, with its palm mute on release."],
     fr: ["Corde pincée", "Une corde et le plectre, avec son étouffement au relâché."],
-    values: { "resonator/model": 1, "exciter/mallet": 0.7, "exciter/strike": 0.9, "resonator/geometry": 0.25, "resonator/brightness": 0.6, "resonator/damping": 0.45, "space/space": 0.6 },
+    values: { "resonator/model": 1, "exciter/mallet": 0.7, "exciter/strike": 0.7, "resonator/geometry": 0.25, "resonator/brightness": 0.6, "resonator/damping": 0.45, "space/space": 0.6 },
   },
   {
     id: "chord",
@@ -174,5 +174,99 @@ export const PRESETS = [
     en: ["Particles", "Bouncing particles on a metallic resonator, in a large space."],
     fr: ["Particules", "Des particules qui rebondissent sur un résonateur métallique, dans un grand espace."],
     values: { "exciter/mallet": 0.93, "exciter/strike_timbre": 0.7, "resonator/geometry": 0.65, "resonator/brightness": 0.7, "resonator/damping": 0.4, "space/space": 1.3 },
+  },
+  // Percussion.
+  {
+    id: "gong",
+    en: ["Gong", "A recorded mallet on strongly stretched modes that ring long, in a large space."],
+    fr: ["Gong", "Un maillet enregistré sur des modes très étirés qui résonnent longtemps, dans un grand espace."],
+    values: { "exciter/strike": 0.85, "exciter/mallet": 0.2, "exciter/strike_timbre": 0.4, "resonator/geometry": 0.95, "resonator/brightness": 0.65, "resonator/damping": 0.1, "resonator/position": 0.3, "space/space": 1.4 },
+  },
+  {
+    id: "steeldrum",
+    en: ["Steel drum", "A mallet on moderately stretched, bright modes."],
+    fr: ["Steel drum", "Un maillet sur des modes moyennement étirés et brillants."],
+    values: { "exciter/mallet": 0.5, "exciter/strike_timbre": 0.6, "resonator/geometry": 0.45, "resonator/brightness": 0.65, "resonator/damping": 0.35, "resonator/position": 0.2, "space/space": 0.8 },
+  },
+  {
+    id: "woodblock",
+    en: ["Wood block", "A short recorded hit on a damped, dark resonator: dry."],
+    fr: ["Bloc de bois", "Un coup enregistré bref sur un résonateur amorti et sombre : sec."],
+    values: { "exciter/strike": 0.9, "exciter/mallet": 0.1, "exciter/strike_timbre": 0.7, "resonator/geometry": 0.15, "resonator/brightness": 0.25, "resonator/damping": 0.05, "resonator/position": 0.4, "space/space": 0.3 },
+  },
+  {
+    id: "kalimba",
+    en: ["Kalimba", "A recorded mallet on slightly stretched modes, picked up near the edge."],
+    fr: ["Kalimba", "Un maillet enregistré sur des modes légèrement étirés, captés près du bord."],
+    values: { "exciter/mallet": 0.25, "exciter/strike_timbre": 0.55, "resonator/geometry": 0.33, "resonator/brightness": 0.55, "resonator/damping": 0.4, "resonator/position": 0.12, "space/space": 0.7 },
+  },
+  // Bowed and blown.
+  {
+    id: "bowl",
+    en: ["Singing bowl", "A gentle bow on stretched, bright modes that barely decay."],
+    fr: ["Bol chantant", "Un archet doux sur des modes étirés et brillants qui s'éteignent à peine."],
+    values: { "exciter/strike": 0, "exciter/bow": 0.6, "exciter/bow_timbre": 0.4, "exciter/envelope": 0.65, "resonator/geometry": 0.72, "resonator/brightness": 0.8, "resonator/damping": 0.1, "resonator/position": 0.35, "space/space": 1.2 },
+  },
+  {
+    id: "lowbow",
+    en: ["Low bow", "The bow alone on harmonic modes, dark, with an ADSR: play it low."],
+    fr: ["Archet grave", "L'archet seul sur des modes harmoniques, sombre, en ADSR : à jouer grave."],
+    values: { "exciter/strike": 0, "exciter/bow": 0.95, "exciter/bow_timbre": 0.35, "exciter/envelope": 0.5, "resonator/geometry": 0.27, "resonator/brightness": 0.3, "resonator/damping": 0.75, "resonator/position": 0.18, "space/space": 0.9 },
+  },
+  {
+    id: "flute",
+    en: ["Flute", "A steady breath without the reed on damped harmonic modes."],
+    fr: ["Flûte", "Un souffle régulier, sans l'anche, sur des modes harmoniques amortis."],
+    values: { "exciter/strike": 0, "exciter/blow": 0.35, "exciter/flow": 0.15, "exciter/blow_timbre": 0.6, "exciter/envelope": 0.55, "resonator/geometry": 0.27, "resonator/brightness": 0.5, "resonator/damping": 0.75, "resonator/position": 0.25, "space/space": 0.9 },
+  },
+  {
+    id: "clarinet",
+    en: ["Clarinet", "The reed, dark, on harmonic modes picked up in the middle (odd partials)."],
+    fr: ["Clarinette", "L'anche, sombre, sur des modes harmoniques captés au milieu (partiels impairs)."],
+    values: { "exciter/strike": 0, "exciter/blow": 0.9, "exciter/flow": 0.3, "exciter/blow_timbre": 0.3, "exciter/envelope": 0.55, "resonator/geometry": 0.27, "resonator/brightness": 0.35, "resonator/damping": 0.65, "resonator/position": 0.5, "space/space": 0.8 },
+  },
+  // Strings.
+  {
+    id: "harp",
+    en: ["Harp", "One string and the plectrum, ringing long, with some space."],
+    fr: ["Harpe", "Une corde et le plectre, qui résonne longtemps, avec un peu d'espace."],
+    values: { "resonator/model": 1, "exciter/strike": 0.85, "exciter/mallet": 0.65, "exciter/strike_timbre": 0.45, "resonator/geometry": 0.25, "resonator/brightness": 0.6, "resonator/damping": 0.7, "resonator/position": 0.2, "space/space": 1.0 },
+  },
+  {
+    id: "koto",
+    en: ["Dispersive string", "One string with positive dispersion (geometry above 0.26), plucked near the bridge, like a koto or a sitar."],
+    fr: ["Corde dispersive", "Une corde à dispersion positive (géométrie au-delà de 0,26), pincée près du chevalet, comme un koto ou un sitar."],
+    values: { "resonator/model": 1, "exciter/mallet": 0.72, "exciter/strike_timbre": 0.7, "resonator/geometry": 0.55, "resonator/brightness": 0.8, "resonator/damping": 0.55, "resonator/position": 0.12, "space/space": 0.7 },
+  },
+  {
+    id: "muted",
+    en: ["Muted string", "One string, the plectrum at the end of its range, a short damping."],
+    fr: ["Corde étouffée", "Une corde, le plectre en fin de plage, un amortissement court."],
+    values: { "resonator/model": 1, "exciter/strike": 0.75, "exciter/mallet": 0.78, "resonator/geometry": 0.25, "resonator/brightness": 0.45, "resonator/damping": 0.25, "resonator/position": 0.3, "space/space": 0.4 },
+  },
+  {
+    id: "bowedchord",
+    en: ["Bowed chord", "Five strings tuned to a chord, sustained by the bow, with an ADSR."],
+    fr: ["Accord frotté", "Cinq cordes accordées sur un accord, entretenues par l'archet, en ADSR."],
+    values: { "resonator/model": 2, "exciter/strike": 0, "exciter/bow": 0.85, "exciter/envelope": 0.55, "resonator/geometry": 0.65, "resonator/brightness": 0.55, "resonator/damping": 0.8, "space/space": 1.2 },
+  },
+  // Textures and space.
+  {
+    id: "rainstick",
+    en: ["Rain stick", "Particles on a harmonic resonator with little damping: hold the key."],
+    fr: ["Bâton de pluie", "Des particules sur un résonateur harmonique peu amorti : tenir la touche."],
+    values: { "exciter/strike": 0.7, "exciter/mallet": 0.86, "exciter/strike_timbre": 0.5, "resonator/geometry": 0.3, "resonator/brightness": 0.45, "resonator/damping": 0.6, "space/space": 1.0 },
+  },
+  {
+    id: "chimes",
+    en: ["Wind chimes", "Particles on a bell-like resonator, bright and long, in a large space."],
+    fr: ["Carillon à vent", "Des particules sur un résonateur en cloche, brillant et long, dans un grand espace."],
+    values: { "exciter/mallet": 0.95, "exciter/strike_timbre": 0.85, "resonator/geometry": 0.8, "resonator/brightness": 0.8, "resonator/damping": 0.2, "space/space": 1.4 },
+  },
+  {
+    id: "drone",
+    en: ["Drone", "The bow on a sustained resonator in a large reverb; move space past 1.75 to freeze the reverb with what it holds."],
+    fr: ["Drone", "L'archet sur un résonateur entretenu dans une grande réverbération ; passez l'espace au-delà de 1,75 pour la figer avec ce qu'elle contient."],
+    values: { "exciter/strike": 0, "exciter/bow": 0.8, "exciter/envelope": 0.6, "resonator/geometry": 0.4, "resonator/brightness": 0.5, "resonator/damping": 0.7, "space/space": 1.5 },
   },
 ];

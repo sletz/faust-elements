@@ -19,6 +19,8 @@
 #                    compiled to wasm by faust-rs into web/dsp (make -B web after a
 #                    faust-rs change)
 #   make web-check   the wasm DSPs against faustprobe, and their cost (node)
+#   make web-presets every preset of the page rendered with the wasm: none silent,
+#                    none above 0 dBFS (node)
 #   make web-serve [PORT=8000]
 #                    serve the repository; open http://localhost:PORT/web/
 #   make clean       remove build/
@@ -46,7 +48,7 @@ ELEMENTS_SRC = $(addprefix $(ELEMENTS)/elements/dsp/,exciter.cc multistage_envel
 # The reference arithmetic is pinned: no fused multiply-add, no fast-math.
 REF_FLAGS = -std=c++14 -O2 -ffp-contract=off -DTEST -I $(ELEMENTS) -Wno-everything
 
-.PHONY: help ref tables check doctests test results figures paper render cost web web-check web-serve clean
+.PHONY: help ref tables check doctests test results figures paper render cost web web-check web-presets web-serve clean
 help:
 	@sed -n '1,/^$$/p' Makefile | sed 's/^# \{0,1\}//'
 
@@ -115,6 +117,9 @@ web: $(WEB_DSP)/voice.wasm $(WEB_DSP)/body.wasm
 
 web-check: web
 	node scripts/web_check.mjs
+
+web-presets: web
+	node scripts/check_presets.mjs
 
 web-serve: web
 	$(PYTHON) scripts/web_serve.py $(PORT)
