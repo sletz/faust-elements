@@ -131,7 +131,7 @@ web-fuzz: web
 
 web-atlas: web/atlas.json
 
-web/atlas.json: $(WEB_DSP)/voice.wasm $(WEB_DSP)/body.wasm web/controls.js scripts/gen_atlas.mjs
+web/atlas.json: $(WEB_DSP)/voice.wasm $(WEB_DSP)/body.wasm web/controls.js web/describe.js scripts/gen_atlas.mjs
 	node scripts/gen_atlas.mjs 2000 1
 
 web-serve: web web/atlas.json

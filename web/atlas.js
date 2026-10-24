@@ -18,7 +18,11 @@ const HIT = 10; // px, the reach of the pointer
  * @param {(id: string) => string} o.presetName - a preset's name by id
  * @param {(index: number, play: boolean) => void} o.onPick - a dot was clicked
  * @param {number} [o.current] - the index of the patch loaded from the atlas
- * @returns {{resize: () => void, setCurrent: (index: number) => void}}
+ * @param {boolean} [o.compact] - a small map: the components only, no names
+ * @returns {{resize: () => void, setCurrent: (index: number) => void,
+ *   setSound: (sound: ?Object) => void, setTarget: (sound: ?Object) => void}}
+ *   setSound marks the current sound, setTarget the sound the timbre orbit asks
+ *   for: {pc, d (in data.axes order), c (decay extrapolated)}, or null
  */
 export function createAtlas(container, o) {
   const { data, text } = o;
@@ -36,6 +40,10 @@ export function createAtlas(container, o) {
   let xAxis = choices[0];
   let yAxis = choices[1];
   let current = o.current ?? -1;
+  let sound = null;
+  let target = null;
+  const compact = Boolean(o.compact);
+  const margin = compact ? { left: 30, right: 8, top: 8, bottom: 26 } : MARGIN;
   let hover = -1;
   let screen = new Float32Array(0); // x, y of every dot, CSS px
 
@@ -91,7 +99,9 @@ export function createAtlas(container, o) {
   tip.className = "atlas-tip";
   tip.hidden = true;
   stage.append(canvas, tip);
-  container.append(bar, stage);
+  if (compact) container.append(stage);
+  else container.append(bar, stage);
+  stage.classList.toggle("compact", compact);
   const ctx = canvas.getContext("2d");
 
   const value = (axis, p) => {
@@ -146,10 +156,10 @@ export function createAtlas(container, o) {
     ctx.clearRect(0, 0, w, h);
     const [x0, x1] = extent(xAxis);
     const [y0, y1] = extent(yAxis);
-    const pw = w - MARGIN.left - MARGIN.right;
-    const ph = h - MARGIN.top - MARGIN.bottom;
-    const sx = (v) => MARGIN.left + ((v - x0) / (x1 - x0)) * pw;
-    const sy = (v) => MARGIN.top + (1 - (v - y0) / (y1 - y0)) * ph;
+    const pw = w - margin.left - margin.right;
+    const ph = h - margin.top - margin.bottom;
+    const sx = (v) => margin.left + ((v - x0) / (x1 - x0)) * pw;
+    const sy = (v) => margin.top + (1 - (v - y0) / (y1 - y0)) * ph;
     const ink = css("--ink");
     const muted = css("--muted");
     const line = css("--line");
@@ -165,29 +175,29 @@ export function createAtlas(container, o) {
     for (const [v, label] of ticks(xAxis, x0, x1)) {
       const x = Math.round(sx(v)) + 0.5;
       ctx.beginPath();
-      ctx.moveTo(x, MARGIN.top);
-      ctx.lineTo(x, MARGIN.top + ph);
+      ctx.moveTo(x, margin.top);
+      ctx.lineTo(x, margin.top + ph);
       ctx.stroke();
-      ctx.fillText(label, x, MARGIN.top + ph + 4);
+      ctx.fillText(label, x, margin.top + ph + 4);
     }
     ctx.textAlign = "right";
     ctx.textBaseline = "middle";
     for (const [v, label] of ticks(yAxis, y0, y1)) {
       const y = Math.round(sy(v)) + 0.5;
       ctx.beginPath();
-      ctx.moveTo(MARGIN.left, y);
-      ctx.lineTo(MARGIN.left + pw, y);
+      ctx.moveTo(margin.left, y);
+      ctx.lineTo(margin.left + pw, y);
       ctx.stroke();
-      ctx.fillText(label, MARGIN.left - 6, y);
+      ctx.fillText(label, margin.left - 6, y);
     }
     ctx.fillStyle = ink;
     ctx.textAlign = "center";
     ctx.textBaseline = "bottom";
     // The short title of a component when the long one does not fit.
-    const title = (axis, room) => (axis.short && ctx.measureText(axis.label).width > room ? axis.short : axis.label);
-    ctx.fillText(title(xAxis, pw), MARGIN.left + pw / 2, h - 2);
+    const title = (axis, room) => (axis.short && (compact || ctx.measureText(axis.label).width > room) ? axis.short : axis.label);
+    ctx.fillText(title(xAxis, pw), margin.left + pw / 2, h - 2);
     ctx.save();
-    ctx.translate(12, MARGIN.top + ph / 2);
+    ctx.translate(12, margin.top + ph / 2);
     ctx.rotate(-Math.PI / 2);
     ctx.textBaseline = "middle";
     ctx.fillText(title(yAxis, ph), 0, 0);
@@ -230,13 +240,13 @@ export function createAtlas(container, o) {
     ctx.textBaseline = "middle";
     ctx.lineWidth = 3;
     const taken = [];
-    for (const [p, x, y] of presets) {
+    for (const [p, x, y] of compact ? [] : presets) {
       const name = o.presetName(p.preset);
       const tw = ctx.measureText(name).width;
       const th = 12;
       const places = [[x + 8, y], [x - 8 - tw, y], [x - tw / 2, y - 12], [x - tw / 2, y + 12]];
-      const at = places.find(([lx, ly]) => lx >= MARGIN.left && lx + tw <= MARGIN.left + pw
-        && ly - th / 2 >= MARGIN.top && ly + th / 2 <= MARGIN.top + ph
+      const at = places.find(([lx, ly]) => lx >= margin.left && lx + tw <= margin.left + pw
+        && ly - th / 2 >= margin.top && ly + th / 2 <= margin.top + ph
         && !taken.some(([ax, ay, aw]) => lx < ax + aw && ax < lx + tw && Math.abs(ly - ay) < th));
       if (!at) continue;
       taken.push([at[0], at[1], tw]);
@@ -244,6 +254,45 @@ export function createAtlas(container, o) {
       ctx.strokeText(name, at[0], at[1]);
       ctx.fillStyle = ink;
       ctx.fillText(name, at[0], at[1]);
+    }
+    // The sound asked for (a dashed ring), the current sound (a diamond), and the
+    // gap between them.
+    const at = (m) => [sx(value(xAxis, m)), sy(value(yAxis, m))];
+    const accent = css("--accent");
+    if (target && sound) {
+      const [tx, ty] = at(target);
+      const [cx, cy] = at(sound);
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.moveTo(tx, ty);
+      ctx.lineTo(cx, cy);
+      ctx.stroke();
+    }
+    if (target) {
+      const [tx, ty] = at(target);
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([3, 2]);
+      ctx.beginPath();
+      ctx.arc(tx, ty, 8, 0, 2 * Math.PI);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    if (sound) {
+      const [cx, cy] = at(sound);
+      ctx.fillStyle = accent;
+      ctx.strokeStyle = ink;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - 7);
+      ctx.lineTo(cx + 7, cy);
+      ctx.lineTo(cx, cy + 7);
+      ctx.lineTo(cx - 7, cy);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
     }
     for (const [i, r] of [[hover, 7], [current, 9]]) {
       if (i < 0) continue;
@@ -275,7 +324,8 @@ export function createAtlas(container, o) {
     return best;
   }
 
-  const measure = (a, v) => {
+  const measure = (a, v, extrapolated) => {
+    if (a === "decay" && extrapolated) return `≈ ${v >= 30 ? "≥ 30 s" : measure(a, v, false)}`;
     switch (a) {
       case "brightness": return `${Math.round(v)} Hz`;
       case "harmonicity": return v.toFixed(2);
@@ -302,7 +352,7 @@ export function createAtlas(container, o) {
       const dt = document.createElement("dt");
       dt.textContent = text.axes[a][0];
       const dd = document.createElement("dd");
-      dd.textContent = measure(a, p.d[j]);
+      dd.textContent = measure(a, p.d[j], p.c);
       table.append(dt, dd);
     });
     tip.append(title, sub, table);
@@ -351,6 +401,14 @@ export function createAtlas(container, o) {
     resize: draw,
     setCurrent: (i) => {
       current = i;
+      draw();
+    },
+    setSound: (m) => {
+      sound = m;
+      draw();
+    },
+    setTarget: (m) => {
+      target = m;
       draw();
     },
   };

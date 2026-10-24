@@ -121,7 +121,7 @@ export function createOrbit(container, o) {
   // open, the parameters' history otherwise (the component's convention).
   window.addEventListener("keydown", (event) => {
     if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "z" || event.repeat) return;
-    if (!(event.target instanceof Element) || !event.target.closest(".orbit-ui-root")) return;
+    if (!(event.target instanceof Node) || !container.contains(event.target)) return;
     event.preventDefault();
     const redo = event.shiftKey;
     if (container.classList.contains("orbit-ui-overlay-active")) {

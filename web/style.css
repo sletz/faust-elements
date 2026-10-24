@@ -54,8 +54,17 @@ button { font: inherit; }
 .panel[hidden] { display: none; }
 .orbit-panel { display: block; }
 .orbit-panel .help { margin: 4px 0 8px; }
-#orbit-root { height: 560px; border-radius: 6px; overflow: hidden; }
-@media (max-width: 600px) { #orbit-root { height: 460px; } }
+#orbit-root, #timbre-root { height: 560px; border-radius: 6px; overflow: hidden; }
+@media (max-width: 600px) { #orbit-root, #timbre-root { height: 460px; } }
+.side-by-side { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px 20px; }
+@media (min-width: 900px) {
+  .orbit-layout { grid-template-columns: minmax(0, 1fr) 300px; }
+  .atlas-layout { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); }
+}
+.side-column h3 { margin: 0 0 2px; font-size: 1em; }
+.side-column .help { margin: 0 0 8px; }
+.timbre-status { min-height: 1.4em; }
+.atlas-stage.compact { height: 300px; }
 .control { margin: 6px 0 10px; }
 .control label { display: grid; grid-template-columns: 9em 1fr 4em; gap: 8px; align-items: center; }
 .control input { width: 100%; }

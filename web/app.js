@@ -4,7 +4,9 @@
 import { CONTROLS, GROUPS, PRESETS } from "./controls.js";
 import { controlKey, uiItems } from "./faust-wasm-dsp.js";
 import { createAtlas } from "./atlas.js";
+import { project } from "./describe.js";
 import { createOrbit } from "./orbit.js";
+import { createTimbreOrbit, nearestSound, percentile, quantile, timbreTable } from "./timbre.js";
 
 const DSP_DIR = "dsp/";
 // The module's sample rate: every table and delay of the model is computed for it.
@@ -27,7 +29,13 @@ const TEXT = {
     orbitHelp: "Every control is a dot: drag one, or the centre to move them all; Random scatters them. Library opens the presets projected on a plane: click a disc to recall it, drag the cross between discs to morph from one sound to another, double-click to keep the current sound. Play notes while you explore.",
     orbitCenter: "Bring every control back to the centre", orbitRandom: "Scatter the controls at random",
     atlasTab: "Atlas",
-    atlasHelp: "Sounds of the instrument, the presets and random patches, each played offline as A3 for one second, measured, and laid out by what they sound like. Hover a dot to read its measures, click it to load the patch and hear it. The axes are the two principal components of the measures (all but the loudness), or any measure.",
+    atlasHelp: "Sounds of the instrument, the presets and random patches, each played offline as A3 for one second, measured, and laid out by what they sound like. Hover a dot to read its measures, click it to load the patch and hear it. The axes are the two principal components of the measures (all but the loudness), or any measure. The diamond is the current sound, measured whenever it changes.",
+    timbreTitle: "Timbre orbit",
+    timbreHelp: "The orbit again, but its dots are the measures, each a rank among the atlas's sounds (0.5: the median sound). Move them to ask for a sound: the page loads the nearest sound of the atlas, then measures and refines it for a moment. On the atlas, the dashed ring is the sound asked for, the diamond the sound obtained. Library lays the presets out by timbre.",
+    timbreSearching: "Refining…",
+    timbreGap: "Asked and obtained differ by {n} percentiles on average.",
+    mapTitle: "Where the sound is",
+    mapHelp: "The current sound (the diamond), measured and placed on the atlas as the orbit moves. Click a dot to load it.",
     atlasMissing: "No atlas yet: run make web-atlas to compute web/atlas.json.",
     atlas: {
       axes: {
@@ -50,7 +58,13 @@ const TEXT = {
     orbitHelp: "Chaque commande est un point : déplacez-en un, ou le centre pour les déplacer tous ; Random les disperse. Library ouvre les préréglages projetés sur un plan : cliquez un disque pour le rappeler, glissez la croix entre les disques pour passer d'un son à l'autre, double-cliquez pour garder le son courant. Jouez des notes pendant l'exploration.",
     orbitCenter: "Ramener toutes les commandes au centre", orbitRandom: "Disperser les commandes au hasard",
     atlasTab: "Atlas",
-    atlasHelp: "Des sons de l'instrument, les préréglages et des réglages tirés au hasard, chacun joué hors ligne en la 3 pendant une seconde, mesuré, et placé selon ce qu'il fait entendre. Survolez un point pour lire ses mesures, cliquez-le pour charger le réglage et l'écouter. Les axes sont les deux composantes principales des mesures (toutes sauf le niveau), ou n'importe quelle mesure.",
+    atlasHelp: "Des sons de l'instrument, les préréglages et des réglages tirés au hasard, chacun joué hors ligne en la 3 pendant une seconde, mesuré, et placé selon ce qu'il fait entendre. Survolez un point pour lire ses mesures, cliquez-le pour charger le réglage et l'écouter. Les axes sont les deux composantes principales des mesures (toutes sauf le niveau), ou n'importe quelle mesure. Le losange est le son courant, mesuré à chaque changement.",
+    timbreTitle: "Orbite des timbres",
+    timbreHelp: "L'orbite encore, mais ses points sont les mesures, chacune un rang parmi les sons de l'atlas (0,5 : le son médian). Déplacez-les pour demander un son : la page charge le son le plus proche de l'atlas, puis le mesure et l'affine un instant. Sur l'atlas, l'anneau pointillé est le son demandé, le losange le son obtenu. Library place les préréglages selon leur timbre.",
+    timbreSearching: "Affinage…",
+    timbreGap: "Demandé et obtenu diffèrent de {n} centiles en moyenne.",
+    mapTitle: "Où est le son",
+    mapHelp: "Le son courant (le losange), mesuré et placé sur l'atlas pendant que l'orbite bouge. Cliquez un point pour le charger.",
     atlasMissing: "Pas encore d'atlas : lancez make web-atlas pour calculer web/atlas.json.",
     atlas: {
       axes: {
@@ -95,13 +109,39 @@ function send(message) {
 let orbit = null;
 const orbitHost = document.createElement("div");
 orbitHost.id = "orbit-root";
-// The atlas (web/atlas.js) of the sounds of web/atlas.json, loaded the first
-// time its tab is shown; the patch last loaded from it.
+// The atlas (web/atlas.js) of the sounds of web/atlas.json, loaded with the
+// DSPs, drawn the first time its tab is shown; the small map beside the orbit;
+// the patch last loaded from them.
 let atlas = null;
+let miniAtlas = null;
 let atlasData = null;
+let atlasTable = null;
 let atlasCurrent = -1;
 const atlasHost = document.createElement("div");
 atlasHost.id = "atlas-root";
+const miniHost = document.createElement("div");
+miniHost.id = "mini-atlas-root";
+// The timbre orbit (web/timbre.js), beside the atlas.
+let timbre = null;
+const timbreHost = document.createElement("div");
+timbreHost.id = "timbre-root";
+const timbreStatus = document.createElement("p");
+timbreStatus.className = "help timbre-status";
+// The current sound measured by measure-worker.js after every change: one
+// measure at a time, the latest values when it is done.
+let worker = null;
+let measureTimer = 0;
+let measuring = false;
+let measureAgain = false;
+let soundMark = null; // the current sound on the atlas
+let soundD = null; // its descriptors
+let targetMark = null; // the sound the timbre orbit asks for
+let timbreTarget = null; // its percentiles
+// Who changed the sound last: "timbre" while the timbre orbit drives it.
+let changeSource = "other";
+let applyingTimbre = false;
+let searchId = 0;
+let searchTimer = 0;
 // True while a preset sets every control, so that the orbit is updated once.
 let batching = false;
 
@@ -113,6 +153,10 @@ function setControl(key, value, fromOrbit = false) {
   values.set(key, value);
   if (orbit && !fromOrbit && !batching) orbit.setValues([[key, value]]);
   send({ type: "control", key, value });
+  if (!batching) {
+    if (!applyingTimbre) leaveTimbre();
+    scheduleMeasure();
+  }
   const row = document.querySelector(`[data-key="${key}"]`);
   if (row) {
     row.querySelector("input").value = value;
@@ -154,7 +198,24 @@ async function start() {
   ctx.resume().catch(() => {});
   try {
     await ctx.audioWorklet.addModule("elements-processor.js");
-    const [voice, body] = await Promise.all([loadDsp("voice"), loadDsp("body")]);
+    const [voice, body, atlasJson] = await Promise.all([
+      loadDsp("voice"),
+      loadDsp("body"),
+      // The atlas is optional (make web-atlas); one without a projection is older.
+      fetch("atlas.json").then((r) => (r.ok ? r.json() : null)).catch(() => null),
+    ]);
+    if (atlasJson && atlasJson.projection) {
+      atlasData = atlasJson;
+      atlasTable = timbreTable(atlasData);
+      try {
+        worker = new Worker("measure-worker.js", { type: "module" });
+        worker.onmessage = (e) => onWorker(e.data);
+        worker.postMessage({ type: "init", voice, body });
+      } catch {
+        // No module workers: the atlas without the current sound.
+        worker = null;
+      }
+    }
     audio.json = { voice: voice.json, body: body.json };
     const node = new AudioWorkletNode(ctx, "elements", {
       numberOfInputs: 0,
@@ -231,8 +292,12 @@ function buildControls() {
     { id: "orbit", en: TEXT.en.orbitTab, fr: TEXT.fr.orbitTab },
     { id: "atlas", en: TEXT.en.atlasTab, fr: TEXT.fr.atlasTab },
   ];
-  // The atlas is drawn again in the new language when its tab is shown.
+  // The atlas, its map and the timbre orbit are drawn again in the new
+  // language when their tab is shown.
   atlas = null;
+  miniAtlas = null;
+  if (timbre) timbre.destroy();
+  timbre = null;
   if (!groups.some((g) => g.id === currentTab)) currentTab = groups[0].id;
   const bar = document.createElement("div");
   bar.className = "tabs";
@@ -258,14 +323,14 @@ function buildControls() {
       const help = document.createElement("p");
       help.className = "help";
       help.textContent = t("orbitHelp");
-      panel.append(help, orbitHost);
+      panel.append(help, sideBySide(orbitHost, "orbit-layout", t("mapTitle"), t("mapHelp"), miniHost));
     }
     if (g.id === "atlas") {
       panel.classList.add("atlas-panel");
       const help = document.createElement("p");
       help.className = "help";
       help.textContent = t("atlasHelp");
-      panel.append(help, atlasHost);
+      panel.append(help, sideBySide(atlasHost, "atlas-layout", t("timbreTitle"), t("timbreHelp"), timbreHost, timbreStatus));
     }
     for (const c of CONTROLS.filter((x) => x.group === g.id && ranges.has(x.key))) {
       const r = ranges.get(c.key);
@@ -324,36 +389,174 @@ function showTab(id) {
       else orbit = makeOrbit();
     });
   }
-  if (id === "atlas") showAtlas();
+  if (id === "orbit" && audio.json) showMap(miniHost, true);
+  if (id === "atlas" && audio.json) showMap(atlasHost, false);
 }
 
-async function showAtlas() {
-  if (atlas) {
-    requestAnimationFrame(() => atlas.resize());
+// A main element and, beside it on a wide page (below it otherwise), a column
+// with a title, a help line and more elements.
+function sideBySide(main, className, title, help, ...side) {
+  const layout = document.createElement("div");
+  layout.className = `side-by-side ${className}`;
+  const left = document.createElement("div");
+  left.className = "side-main";
+  left.appendChild(main);
+  const right = document.createElement("div");
+  right.className = "side-column";
+  const h = document.createElement("h3");
+  h.textContent = title;
+  const p = document.createElement("p");
+  p.className = "help";
+  p.textContent = help;
+  right.append(h, p, ...side);
+  layout.append(left, right);
+  return layout;
+}
+
+const presetName = (id) => PRESETS.find((p) => p.id === id)?.[lang][0] ?? id;
+
+// The atlas in its tab (with the timbre orbit), or the small map beside the
+// orbit, built the first time it is shown.
+function showMap(host, compact) {
+  if (!atlasData) {
+    host.innerHTML = "";
+    const p = document.createElement("p");
+    p.className = "help";
+    p.textContent = t("atlasMissing");
+    host.appendChild(p);
     return;
   }
-  if (!atlasData) {
-    try {
-      const r = await fetch("atlas.json");
-      if (!r.ok) throw new Error(r.statusText);
-      atlasData = await r.json();
-    } catch {
-      atlasHost.innerHTML = "";
-      const p = document.createElement("p");
-      p.className = "help";
-      p.textContent = t("atlasMissing");
-      atlasHost.appendChild(p);
+  const existing = compact ? miniAtlas : atlas;
+  if (existing) {
+    requestAnimationFrame(() => existing.resize());
+  } else {
+    const map = createAtlas(host, {
+      data: atlasData, text: t("atlas"), presetName, onPick: loadAtlasSound, current: atlasCurrent, compact,
+    });
+    map.setSound(soundMark);
+    map.setTarget(targetMark);
+    if (compact) miniAtlas = map;
+    else atlas = map;
+  }
+  if (compact) return;
+  // The timbre orbit lays its dots out from its size, as the other orbit.
+  requestAnimationFrame(() => {
+    if (timbre) {
+      timbre.resize();
       return;
     }
-  }
-  if (atlas || currentTab !== "atlas") return;
-  atlas = createAtlas(atlasHost, {
-    data: atlasData,
-    text: t("atlas"),
-    presetName: (id) => PRESETS.find((p) => p.id === id)?.[lang][0] ?? id,
-    onPick: loadAtlasSound,
-    current: atlasCurrent,
+    timbre = createTimbreOrbit(timbreHost, {
+      atlas: atlasData,
+      t: atlasTable,
+      axes: t("atlas").axes,
+      presetName,
+      onTarget: askTimbre,
+      tooltips: { centerButton: t("orbitCenter"), randomButton: t("orbitRandom") },
+    });
+    if (timbreTarget) timbre.setValues(timbreTarget);
+    else if (soundD) timbre.setValues(ranksOf(soundD));
   });
+}
+
+// The current sound measured after a change, 120 ms after the last one.
+function scheduleMeasure() {
+  if (!worker || !atlasData) return;
+  clearTimeout(measureTimer);
+  measureTimer = setTimeout(() => {
+    if (measuring) {
+      measureAgain = true;
+      return;
+    }
+    measuring = true;
+    worker.postMessage({ type: "measure", id: 0, patch: Object.fromEntries(values) });
+  }, 120);
+}
+
+// A sound on the atlas: its descriptors in the atlas's order, its coordinates.
+function markOf(d, censored = false) {
+  return { d: atlasData.axes.map((a) => d[a]), pc: project(atlasData, d), c: censored };
+}
+
+const ranksOf = (d) => Object.fromEntries(atlasData.axes.map((a) => [a, Number(percentile(atlasTable.table[a], d[a]).toFixed(2))]));
+
+function onWorker(m) {
+  if (m.type === "measured") {
+    measuring = false;
+    if (measureAgain) {
+      measureAgain = false;
+      scheduleMeasure();
+    }
+    soundD = m.d;
+    soundMark = m.d ? markOf(m.d, m.censored) : null;
+    for (const map of [atlas, miniAtlas]) if (map) map.setSound(soundMark);
+    if (!m.d) return;
+    if (changeSource === "timbre" && timbreTarget) {
+      // The gap between the sound asked for and the sound obtained, in percentiles.
+      const r = ranksOf(m.d);
+      const gap = Math.sqrt(atlasData.axes.reduce((s, a) => s + (r[a] - timbreTarget[a]) ** 2, 0) / atlasData.axes.length);
+      if (!timbreStatus.dataset.searching) timbreStatus.textContent = t("timbreGap").replace("{n}", String(Math.round(100 * gap)));
+    } else if (timbre) {
+      // The dots follow a sound set elsewhere.
+      timbre.setValues(ranksOf(m.d));
+    }
+  } else if (m.type === "found" && m.id === searchId && changeSource === "timbre") {
+    delete timbreStatus.dataset.searching;
+    applyTimbrePatch(m.patch);
+  }
+}
+
+// The timbre orbit asks for a sound: the nearest sounds of the atlas blended at
+// once, then a search by measures once the dots rest.
+function askTimbre(target) {
+  if (!atlasData) return;
+  timbreTarget = target;
+  const d = Object.fromEntries(atlasData.axes.map((a) => [a, quantile(atlasTable.table[a], target[a])]));
+  targetMark = markOf(d);
+  for (const map of [atlas, miniAtlas]) if (map) map.setTarget(targetMark);
+  const { patch } = nearestSound(atlasData, atlasTable, target, values.get("resonator/model"));
+  applyTimbrePatch(patch);
+  if (!worker) return;
+  timbreStatus.textContent = t("timbreSearching");
+  timbreStatus.dataset.searching = "1";
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    const moves = {};
+    for (const k of atlasData.controls) {
+      const r = ranges.get(k);
+      if (r && r.step < 1) moves[k] = [r.min, r.max];
+    }
+    searchId += 1;
+    worker.postMessage({
+      type: "search", id: searchId, start: Object.fromEntries(values), target, error: atlasTable.table, steps: 40, ranges: moves,
+    });
+  }, 350);
+}
+
+// The atlas's controls of a patch, set as the timbre orbit's.
+function applyTimbrePatch(patch) {
+  changeSource = "timbre";
+  applyingTimbre = true;
+  batching = true;
+  for (const k of atlasData.controls) if (k in patch && ranges.has(k)) setControl(k, patch[k]);
+  batching = false;
+  applyingTimbre = false;
+  if (orbit) orbit.setValues([...values]);
+  markPresetModified();
+  scheduleMeasure();
+}
+
+// A change from elsewhere ends the timbre orbit's request.
+function leaveTimbre() {
+  if (changeSource === "timbre") {
+    timbreTarget = null;
+    targetMark = null;
+    for (const map of [atlas, miniAtlas]) if (map) map.setTarget(null);
+    timbreStatus.textContent = "";
+    delete timbreStatus.dataset.searching;
+    clearTimeout(searchTimer);
+    searchId += 1;
+  }
+  changeSource = "other";
 }
 
 // A sound of the atlas: its patch over the defaults, as a preset is, then the
@@ -366,6 +569,9 @@ function loadAtlasSound(index, play) {
   batching = true;
   for (const [k, r] of ranges) setControl(k, at.has(k) ? at.get(k) : r.init);
   batching = false;
+  for (const map of [atlas, miniAtlas]) if (map) map.setCurrent(index);
+  leaveTimbre();
+  scheduleMeasure();
   if (orbit) orbit.setValues([...values]);
   if (p.preset) {
     $("preset").value = p.preset;
@@ -419,6 +625,8 @@ function applyPreset(id) {
   batching = true;
   for (const [k, r] of ranges) setControl(k, k in p.values ? p.values[k] : r.init);
   batching = false;
+  leaveTimbre();
+  scheduleMeasure();
   if (orbit) orbit.setValues([...values]);
   showPresetHelp();
 }
