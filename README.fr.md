@@ -16,7 +16,7 @@ Ce dépôt réécrit le tout en une bibliothèque Faust, [dsp/elements.lib](dsp/
 - en simple précision, le modèle Faust suit `elements::Part` (le module entier) à **-72 dB du pic ou mieux sur chaque scénario, -100 dB sur la plupart**, et `elements::Voice` à -82 dB ou mieux, échantillon par échantillon sur 2 à 6 secondes ;
 - en double précision l'accord va de -28 à -123 dB : le C++ accumule quelques phases en float32 (le LFO du micro latéral, les rampes de la corde, les deux LFO de la réverbération), le modèle en double précision accumule les mêmes incréments plus exactement, et les deux s'écartent. Le modèle en simple précision, qui fait les mêmes opérations en float, ne s'écarte pas ([results/fig_precision.png](results/fig_precision.png)) ;
 - la sortie ne dépend ni de la taille de bloc de l'hôte (1, 7, 16 ou 512 trames), ni d'une réinitialisation, ni de la compilation (`faustprobe --check all`) ;
-- le module coûte 10,7 ms de calcul par seconde d'audio en mode modal, en natif (faust-rs vers C++, clang -O3), 3,2 fois le C++ d'origine ; 2,8 et 4,9 ms pour une corde et pour les accords, 1,9 et 1,25 fois ([results/cost.txt](results/cost.txt)).
+- le module coûte 11,2 ms de calcul par seconde d'audio en mode modal, en natif (faust-rs vers C++, clang -O3), 3,2 fois le C++ d'origine ; 2,9 et 5,1 ms pour une corde et pour les accords, 2,0 et 1,25 fois ([results/cost.txt](results/cost.txt)).
 
 ![Le scénario d'archet dans le module : C++ et Faust superposés, et leur différence, -83 dB du pic au pire](results/fig_bow.png)
 
@@ -54,7 +54,7 @@ Les tables (courbes d'enveloppe, accent, raideur, coefficients des SVF, MIDI ver
 | space | direct, stéréo, réverbération, réverbération figée | -72 | -97 | -50 | -39 |
 | input | un signal externe dans le résonateur | -105 | -86 | -95 | -76 |
 
-Sur la machine de [results/compare.txt](results/compare.txt) : Apple M5, Apple clang 21.0.0, Elements à eurorack `f4cfa76` (stmlib `e3bd7c9`), faust-rs `172305ea` (faustprobe 0.9.2).
+Sur la machine de [results/compare.txt](results/compare.txt) : Apple M5, Apple clang 21.0.0, Elements à eurorack `f4cfa76` (stmlib `e3bd7c9`), faust-rs `22999fe5` (faustprobe 0.9.2).
 
 - **La simple précision** est la comparaison qui compte : le modèle fait les opérations en float du C++, il doit donc donner les résultats en float du C++, et les donne, aux réordonnancements près des sommes et des produits que le compilateur Faust est libre de faire (un ulp ici et là). Quand un ulp franchit un seuil, l'écart peut grandir : la réverbération sur 16 bits arrondit une valeur d'un côté plutôt que de l'autre, et la différence circule dans ses boucles (le scénario d'espace, -72 dB du pic, -77 dBFS : quelques unités de la mémoire 16 bits), et les modes frottés, une boucle non linéaire, amplifient les écarts (le scénario d'archet, -83 dB).
 - **La double précision** montre où dérive le float32 du C++. Dans chaque scénario l'excitation brute s'accorde à -99 dB ou mieux ; la sortie latérale, qui porte le LFO du micro accumulé en float32 par le C++, diverge au bout de quelques secondes ; les cordes, dont les rampes de retard s'accumulent en float32, aussi. [results/fig_precision.png](results/fig_precision.png) montre la sortie latérale du scénario des particules : sous -97 dB de son pic en simple précision tout du long, -30 dB au bout de trois secondes en double.
@@ -64,11 +64,11 @@ Sur la machine de [results/compare.txt](results/compare.txt) : Apple M5, Apple c
 
 | résonateur | C++ (`build/dump`, -O2) | Faust natif (faust-rs, clang -O3) | faustprobe (JIT Cranelift) |
 |---|---|---|---|
-| modal | 3,4 ms/s | 10,7 ms/s | 17,1 ms/s |
-| une corde | 1,5 ms/s | 2,8 ms/s | 6,7 ms/s |
-| cinq cordes | 3,9 ms/s | 4,9 ms/s | 13,7 ms/s |
+| modal | 3,5 ms/s | 11,2 ms/s | 18,2 ms/s |
+| une corde | 1,5 ms/s | 2,9 ms/s | 7,4 ms/s |
+| cinq cordes | 4,1 ms/s | 5,1 ms/s | 14,3 ms/s |
 
-La différence est dans les modes : avec 26 modes au lieu de 52, le module natif coûte 6,4 ms/s au lieu de 10,4, donc les 52 modes font environ 8 ms de ses 10,7, quand le module C++ entier coûte 3,4. Le code généré garde l'état de chaque mode dans la structure du DSP et le décale à chaque échantillon, là où le C++ parcourt un tableau de filtres ; que ce soit toute la cause n'a pas été mesuré. À 10,7 ms par seconde, le module occupe environ 1 % d'un cœur.
+La différence est dans les modes : avec 26 modes au lieu de 52, le module natif coûte 6,4 ms/s au lieu de 10,4, donc les 52 modes font environ 8 ms de ses 11,2, quand le module C++ entier coûte 3,5. Le code généré garde l'état de chaque mode dans la structure du DSP et le décale à chaque échantillon, là où le C++ parcourt un tableau de filtres ; que ce soit toute la cause n'a pas été mesuré. À 11,2 ms par seconde, le module occupe environ 1 % d'un cœur.
 
 ## 3. Organisation
 
@@ -136,7 +136,7 @@ make web        # web/dsp : la voix et le corps en wasm ; make web-serve, puis h
 - **GitHub Pages.** `.github/workflows/pages.yml` publie `web/` tel qu'il est sur `main`, comme faust-coopiano : rien n'y est compilé, les modules wasm (`make -B web`) et l'atlas (`make web-atlas`) sont construits localement et commités avec la page. Les applications pour téléphone sont alors servies depuis l'adresse de la page publiée.
 - **Commandes hors plage.** Faust ne borne pas une commande par sa plage déclarée, et un hôte peut écrire au-delà (l'hôte wasm de la page écrit ce qu'on lui donne). `make web-bounds` (`scripts/check_bounds.mjs`) écrit chacune des 22 commandes de la voix et du corps, et la vélocité, bien en dessous et au-dessus de sa plage : avant la correction, 27 des 44 écritures différaient de leur borne, sept donnaient NaN (bow_timbre, strike_timbre, brightness, position, mod_frequency, mod_offset, reverb_lp) et, d'après leurs formules d'index et la taille des tables, cinq familles de lectures de table pouvaient sortir de leurs tables (l'échantillon de bruit du souffle par la signature, `s2r`, les tables de filtre des timbres, les bornes des échantillons de la frappe par un mallet négatif, l'accent par une vélocité au-dessus de 1). Chaque commande est maintenant bornée à sa plage là où elle est définie, la vélocité à l'entrée de la voix, et les index de table sont bornés à nouveau en entiers dans les fonctions, pour les appels directs ; les 44 écritures sonnent exactement comme leur borne. Dans les plages rien ne change : `make test` affiche les mêmes lignes, et l'atlas (2 024 patchs dans le wasm en simple précision) est le même fichier, octet pour octet. Une première version bornait aussi l'argument flottant de `s2r`, et le compilateur groupait alors `st + 128` autrement : les accords en simple précision bougeaient d'un ulp, que les cordes amplifient (l'atlas changeait 391 de ses 16 192 valeurs) ; `s2r` ne borne que ses index entiers.
 - **Patchs aléatoires.** `make web-fuzz` joue 2 000 patchs aléatoires dans le wasm, comme le Random de l'orbite, avec la garde de la page, et échoue si une valeur non finie ou énorme atteint la sortie. Il a montré qu'un `mod_offset` au-delà de 0,85 fait diverger l'oscillateur cosinus du micro latéral (ses amplitudes atteignent 1e35) : le numéro de série du module lui donne 0,05 à 0,15, et le curseur s'arrête désormais à 0,5. Les rares voix que la garde remet à zéro divergent aussi dans le C++.
-- **Vérification.** `make web-check` rend le wasm sous node comme le fait le worklet et le compare à faustprobe (`--nvoices 1`, simple précision) sur trois notes : une note frappée à -132 dB du pic, une note frottée identique, un accord de cordes à -78 dB ; le wasm coûte de 13,6 à 16,9 ms par seconde d'audio pour une voix et le corps (node 22, Apple M5).
+- **Vérification.** `make web-check` rend le wasm sous node comme le fait le worklet et le compare à faustprobe (`--nvoices 1`, simple précision) sur trois notes : une note frappée à -132 dB du pic, une note frottée identique, un accord de cordes à -78 dB ; le wasm coûte de 15,6 à 19,3 ms par seconde d'audio pour une voix et le corps (node 22, Apple M5).
 
 ## 6. Ce qui n'est pas porté
 

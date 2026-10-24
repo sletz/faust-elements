@@ -4,8 +4,8 @@
 # machine:   Apple M5, Darwin 25.6.0
 # C++:       Apple clang version 21.0.0 (clang-2100.3.34.2), flags -O2 -ffp-contract=off -DTEST (build/dump)
 # Elements:  pichenettes/eurorack f4cfa76, stmlib e3bd7c9
-# faust-rs:  faustprobe 0.9.2, commit 172305ea
-# faust-elements: commit (none)
+# faust-rs:  faustprobe 0.9.2, commit 22999fe5
+# faust-elements: commit 5489756
 #
 # Each scenario is rendered by build/dump (elements::Voice or elements::Part, float32)
 # and by faustprobe (dsp/elements_voice.dsp or dsp/elements.dsp, --sr 32000 --block 16,
